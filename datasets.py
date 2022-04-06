@@ -236,10 +236,10 @@ def verify_dataset(config):
     else:
         print('Dataset could not be found in: '+data_path)
         response = input('Would you like to download it? (y/n): ')
-        while response != 'y' or response != 'n':
+        while response != 'y' and response != 'n':
             response = input("Please enter 'y' or 'n': ")
         if reponse == 'n': exit()
-        download_datasets(config['setup']['data_dir'], config['setup']['dataset'])
+        download_datasets(config['setup']['data_dir'], [config['setup']['dataset']])
 
 def download_datasets(path, datasets = None) -> None:
     ''' Download datasets, combine train/test & prep data, delete old files.
