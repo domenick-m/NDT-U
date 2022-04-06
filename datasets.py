@@ -257,6 +257,7 @@ def download_datasets(path, datasets = None) -> None:
     print('Downloading Datasets: '+str(datasets if datasets != None else '[ALL]'))
     # Allow '~' in path
     path = osp.expanduser(path)
+    if not os.path.isdir(path): os.makedirs(path)
     # If nothing was passed to datasets, use all datasets from id_dict
     dataset_list = datasets if datasets else id_dict.keys()
     total_files = len(dataset_list) * 2 # train and test for each
