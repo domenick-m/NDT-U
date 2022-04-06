@@ -238,7 +238,7 @@ def verify_dataset(config):
         response = input('Would you like to download it? (y/n): ')
         while response != 'y' and response != 'n':
             response = input("Please enter 'y' or 'n': ")
-        if reponse == 'n': exit()
+        if response == 'n': exit()
         download_datasets(config['setup']['data_dir'], [config['setup']['dataset']])
 
 def download_datasets(path, datasets = None) -> None:
