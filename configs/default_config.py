@@ -104,7 +104,7 @@ config.wandb.alt_wandb_dirs = [ # If the host name is in the list, then store wa
 '''
                     ►──────────── WANDB.SWEEP ────────────◄
 '''
-# This is where that values that should be swept over if sweep is enabled
+# The hyperparameters to search through if config.train.sweep_enabled is True or the --sweep CLI arg is used
 config.wandb.sweep = CN()
 config.wandb.sweep.setup = CN()
 config.wandb.sweep.setup.subset_seed = [404, 606, 737]
