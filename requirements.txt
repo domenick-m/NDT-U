@@ -1,6 +1,5 @@
 absl-py==1.0.0
 alabaster==0.7.12
-albumentations==0.1.12
 altair==4.2.0
 appdirs==1.4.4
 argon2-cffi==21.3.0
@@ -346,7 +345,6 @@ tenacity==8.0.1
 tensorboard==2.8.0
 tensorboard-data-server==0.6.1
 tensorboard-plugin-wit==1.8.1
-tensorflow @ file:///tensorflow-2.8.0-cp37-cp37m-linux_x86_64.whl
 tensorflow-datasets==4.0.1
 tensorflow-estimator==2.8.0
 tensorflow-gcs-config==2.8.0
