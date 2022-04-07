@@ -16,9 +16,9 @@ This project uses wandb to track the runs and manage the sweeps. You can turn of
 To train a model simply run: `python train.py`, the system will then download and extract the selected dataset. 
 
 
-By default the model will be trained with the same configurations as the submissons (currently only `mc_maze_small`, `mc_maze_medium`, `mc_maze_large`, and `area2_bump`) unless the `--default` flag is used, then it will only use the configs in `default_config.py`. You may also set configs for the current run by running: `python train.py --CONFIG_TO_SET value_to_change_to`. Example: `python train.py --dataset mc_maze --epochs 1000`
+By default the model will be trained with the same configurations as the submissons (currently only `mc_maze_small`, `mc_maze_medium`, `mc_maze_large`, and `area2_bump`) unless the `--default` flag is used, then it will only use the configs in `default_config.py`. You may also set configs for the current run by using the configs name you want to change as a flag: `python train.py --CONFIG_TO_SET value_to_change_to`. Example: `python train.py --dataset mc_maze --epochs 1000`
 
 
-To run a sweep you can run: `python train.py --sweep`. To add an agent to an already running sweep run: `python train.py --add`. To see the full list of possible arguments run `python train.py -h`.
+To start a sweep, run: `python train.py --sweep`. To add an agent to an already running sweep, run: `python train.py --add`. To see the full list of possible arguments, run: `python train.py -h`.
 
-To create a submission.h5 file run `python test.py /path/to/model.pt`.
+To create a submission.h5 file run: `python test.py /path/to/model.pt`.
