@@ -12,6 +12,8 @@ First start by recreating the environemt using `conda/miniconda`. This can be ac
 
 This project uses wandb to track the runs and manage the sweeps. You can turn off wandb using: `default_config.wandb.log=False`, note that sweeps will no longer work. If you wish to use wandb (reccomended), then first sign up for an account at: https://wandb.ai/site. Then run the command `wandb login` and paste your API Key.
 
+This project was created in Linux, certain system commands may not work on other platforms.
+
 # Usage
 To train a model simply run: `python train.py`, the system will then download and extract the selected dataset. 
 
