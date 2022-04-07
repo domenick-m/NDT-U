@@ -10,7 +10,7 @@ This is the code for my submission to the [Neural Latents Benchmark Challenge 20
 First start by recreating the environemt using `conda/miniconda`. This can be achieved by running: `conda env create -f environment.yml`. Next, install [nlb_tools](https://github.com/neurallatents/nlb_tools). 
 
 
-This project uses wandb to track the runs and manage the sweeps. You can turn off wandb using: `default_config.wandb.log=False`, note that sweeps will no longer work. If you wish to use wandb (reccomended) then first sign up for an account at: https://wandb.ai/site. Then run the command `wandb login` and paste your API Key.
+This project uses wandb to track the runs and manage the sweeps. You can turn off wandb using: `default_config.wandb.log=False`, note that sweeps will no longer work. If you wish to use wandb (reccomended), then first sign up for an account at: https://wandb.ai/site. Then run the command `wandb login` and paste your API Key.
 
 # Usage
 To train a model simply run: `python train.py`, the system will then download and extract the selected dataset. 
