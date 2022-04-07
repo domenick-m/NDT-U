@@ -24,3 +24,6 @@ By default the model will be trained with the same configurations as the submiss
 To start a sweep, run: `python train.py --sweep`. To add an agent to an already running sweep, run: `python train.py --add`. To see the full list of possible arguments, run: `python train.py -h`.
 
 To create a submission.h5 file run: `python test.py /path/to/model.pt`.
+
+# wandb
+The wandb project associated with my 4 submissions can be found here: https://wandb.ai/domenick-mifsud/benchmarks
