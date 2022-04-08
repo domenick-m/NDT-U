@@ -1,0 +1,46 @@
+model:
+  activation: relu
+  context_backward: 35
+  context_forward: 35
+  dropout: 0.4
+  dropout_attention: 0.6
+  dropout_embedding: 0.7
+  dropout_rates: 0.5
+  hidden_size: 256
+  initrange: 0.01
+  max_spike_count: 20
+  norm: scale
+  n_heads: 4
+  n_layers: 7
+  xavier: false
+  mask_ratio: 0.75
+  random_ratio: 1.0
+  loss_ratio: 0.25
+setup:
+  config_dir: configs/
+  data_dir: data/
+  dataset: area2_bump
+  log_eps: 1.0e-07
+  runs_dir: runs/
+  seed: 100
+  subset_seed: 9451
+train:
+  batch_size: 64
+  early_stopping: true
+  epochs: 20000
+  es_min_bps: 0.3
+  init_lr: 0.01
+  mask_max_span: 4
+  max_grad_norm: 200.0
+  optimizer: AdamW
+  val_ratio: 0.05
+  ramp_end: 10000
+  ramp_start: 1000
+  scheduler: Cosine
+  sweep_enabled: false
+  sweep_epochs: 999999999
+  sweep_type: grid
+  val_interval: 10
+  val_type: random
+  warmup_steps: 1500
+  weight_decay: 1.0e-07

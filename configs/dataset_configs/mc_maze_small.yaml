@@ -20,11 +20,9 @@ setup:
   config_dir: configs/
   data_dir: data/
   dataset: mc_maze_small
-  gpu_idx: -1
   log_eps: 1.0e-07
   runs_dir: runs/
-  save_min_bps: -1000.2
-  save_model: true
+  save_min_bps: 0.25
   seed: 100
   subset_seed: 404
 train:
