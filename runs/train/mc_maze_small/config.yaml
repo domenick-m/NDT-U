@@ -1,0 +1,74 @@
+model:
+  activation: relu
+  context_backward: 35
+  context_forward: 35
+  dropout: 0.5
+  dropout_attention: 0.5
+  dropout_embedding: 0.7
+  dropout_rates: 0.7
+  hidden_size: 128
+  initrange: 0.01
+  loss_ratio: 0.25
+  mask_ratio: 0.75
+  max_spike_count: 20
+  n_heads: 2
+  n_layers: 4
+  norm: layer
+  random_ratio: 1.0
+  xavier: false
+setup:
+  config_dir: configs/
+  data_dir: data/
+  dataset: mc_maze_small
+  gpu_idx: -1
+  log_eps: 1.0e-07
+  runs_dir: runs/
+  save_min_bps: -1000.2
+  save_model: true
+  seed: 100
+  subset_seed: 404
+train:
+  batch_size: 64
+  early_stopping: false
+  epochs: 20000
+  es_chk_pnt: 0.5
+  es_min_bps: 0.125
+  init_lr: 0.005
+  mask_max_span: 3
+  max_grad_norm: 200.0
+  optimizer: AdamW
+  ramp_end: 10000
+  ramp_start: 5000
+  scheduler: Cosine
+  sweep_enabled: false
+  sweep_epochs: 99999999
+  sweep_type: random
+  val_interval: 10
+  val_ratio: 0.05
+  val_type: random
+  warmup_steps: 1000
+  weight_decay: 5.0e-05
+wandb:
+  alt_wandb_dirs: []
+  log: true
+  log_freq: 250
+  log_local: false
+  project: benchmarks
+  silent: 'true'
+  sweep:
+    model:
+      n_heads:
+      - 1
+      - 2
+      - 3
+      - 4
+    setup:
+      subset_seed:
+      - 404
+      - 606
+      - 737
+    train:
+      warmup_steps:
+      - 1500
+      - 5000
+  sweep_name: my-sweep
