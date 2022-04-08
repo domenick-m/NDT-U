@@ -25,5 +25,19 @@ To start a sweep, run: `python train.py --sweep`. To add an agent to an already 
 
 To create a submission.h5 file run: `python test.py /path/to/model.pt`.
 
-# wandb
+# My Submissions
+To generate the model files (best.pt), run:
+
+`python train.py --dataset mc_maze_small`  
+`python train.py --dataset mc_maze_medium`  
+`python train.py --dataset mc_maze_large`  
+`python train.py --dataset area2_bump`  
+
+To generate the submission.h5 files from my presaved models, run:
+
+`python test.py runs/train/mc_maze_small/best.pt`  
+`python test.py runs/train/mc_maze_medium/best.pt`  
+`python test.py runs/train/mc_maze_large/best.pt`  
+`python test.py runs/train/area2_bump/best.pt`  
+
 The wandb project associated with my 4 submissions can be found here: https://wandb.ai/domenick-mifsud/benchmarks
