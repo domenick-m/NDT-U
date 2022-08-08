@@ -23,7 +23,7 @@ setup:
   log_eps: 1.0e-07
   runs_dir: runs/
   save_min_bps: 0.25
-  seed: 100
+  seed: 1
   subset_seed: 404
 train:
   batch_size: 64
@@ -41,8 +41,8 @@ train:
   scheduler: Cosine
   sweep_enabled: false
   sweep_epochs: 99999999
-  sweep_type: random
+  sweep_type: grid
   val_interval: 10
-  val_type: random
+  val_type: original
   warmup_steps: 1000
   weight_decay: 5.0e-05

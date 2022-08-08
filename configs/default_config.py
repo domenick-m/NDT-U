@@ -30,6 +30,9 @@ config.setup.runs_dir = 'runs/' # Where the train and test output data should be
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.train = CN()
+
+config.train.chop_size = 60 # Number of samples to compute loss with
+
 config.train.batch_size = 64 # Number of samples to compute loss with
 config.train.epochs = 20 # Number of full passes through dataset
 
@@ -93,7 +96,7 @@ config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.log_freq = 250 # Epochs between each gradient log of the model by wandb
 config.wandb.log_local = False # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt
 
-config.wandb.project = 'benchmarks' # The wandb project the run should be stored in
+config.wandb.project = 'no-val-dropout-test' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 
 config.wandb.silent = 'true' # ['true', 'false'] If 'true' wandb does not print anything
@@ -107,11 +110,11 @@ config.wandb.alt_wandb_dirs = [ # If the host name is in the list, then store wa
 # The hyperparameters to search through if config.train.sweep_enabled is True or the --sweep CLI arg is used
 config.wandb.sweep = CN()
 config.wandb.sweep.setup = CN()
-config.wandb.sweep.setup.subset_seed = [404, 606, 737]
+config.wandb.sweep.setup.seed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 config.wandb.sweep.train = CN()
-config.wandb.sweep.train.warmup_steps = [1500, 5000]
+# config.wandb.sweep.train.warmup_steps = [1500, 5000]
 config.wandb.sweep.model = CN()
-config.wandb.sweep.model.n_heads = [1, 2, 3, 4]
+# config.wandb.sweep.model.n_heads = [1, 2]
 '''
 ────────────────────────────────────────────────────────────────────────────────
                                    FUNCTIONS
@@ -197,6 +200,7 @@ def get_wandb_config(wandb):
     config = dict(wandb.config)
     for k, v in config.copy().items():
         if '.' in k:
+            print(k)
             new_key = k.split('.')[0]
             inner_key = k.split('.')[1]
             if new_key not in config.keys():

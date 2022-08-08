@@ -21,6 +21,7 @@ from setup import (set_seeds,
                    get_optimizer,
                    get_scheduler,
                    get_wandb_dir,
+                   set_sweep_config,
                    setup_runs_folder,
                    print_train_configs,
                    upload_print_results,
@@ -49,7 +50,6 @@ def main():
     device = torch.device('cuda:0')
 
     os.environ['WANDB_SILENT'] = config['wandb']['silent'] # dont print wandb logs
-    set_seeds(config) # ensures the same init every time
 
     # Add an agent to a wandb sweep
     if '--add' in arg_dict:
@@ -71,6 +71,7 @@ def main():
 
     # Run single train
     else:
+        set_seeds(config)
         run_single(config, device, model_name)
 
 
@@ -116,9 +117,14 @@ def run_sweep():
     wandb.init(
         dir=get_wandb_dir(),
         config=get_config_dict())
+
     # Make sure wandb uses the same config as the original sweep, CLI args may have been used
-    wandb.config = get_config_dict(get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml'))
+    wandb.config.update(
+        get_config_dict(get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml')),
+        allow_val_change=True)
+        
     config = get_wandb_config(wandb)
+    set_seeds(config)
 
     notes = ''
     for group in config['wandb']['sweep'].keys():
@@ -188,8 +194,10 @@ def train(model, train_dataloader, val_dataloader, device):
     config = model.config
     if config['wandb']['log']:
         wandb.watch(model, log_freq=config['wandb']['log_freq'])
+
     # If the model needs to log then create a folder for it.
     log_local = config['wandb']['log_local'] and not config['wandb']['log']
+
     save_path = setup_runs_folder(config, model, 'train') if (
         config['setup']['save_model'] or log_local) else None
 

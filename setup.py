@@ -44,7 +44,7 @@ def set_device(config):
     else: device = str(config['setup']['gpu_idx']) # user defined GPU index
     # Using env vars allows cuda:0 to be used regardless of GPU
     os.environ['CUDA_VISIBLE_DEVICES'] = device
-
+    
 def set_seeds(config):
     ''' Sets seeds.
 
@@ -52,10 +52,13 @@ def set_seeds(config):
         config (dict): A config object.
     '''
     seed = config['setup']['seed']
-    np.random.seed(seed)
     random.seed(seed)
-    torch.random.manual_seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = True
 
 def set_sweep_config(config, arg_dict):
     '''Starts a sweep with wandb.sweep and creates a folder with the sweeps
@@ -307,15 +310,16 @@ def upload_print_results(config, result_dict, progress_bar, save_path):
     epoch = '[Epoch: '+result_dict['epoch']+']'
     loss = '[val loss: '+"{:.4f}".format(result_dict['val_loss'])+']'
     cobps = '[val co-bps: '+"{:.3f}".format(result_dict['co_bps'])+']'
-    fpbps = '[val fp-bps: '+"{:.3f}".format(result_dict['fp_bps'])+']'
-    report = epoch + '   ' + loss + '   ' + cobps + '   ' + fpbps
+    # fpbps = '[val fp-bps: '+"{:.3f}".format(result_dict['fp_bps'])+']'
+    report = epoch + '   ' + loss + '   ' + cobps + '   ' 
+    # report = epoch + '   ' + loss + '   ' + cobps + '   ' + fpbps
     if config['wandb']['log']:
         wandb.log({
             'val loss': result_dict['val_loss'],
             'val heldout loss': result_dict['heldout_loss'],
             'val co-bps': result_dict['co_bps'],
             'val forward loss': result_dict['forward_loss'],
-            'val fp-bps': result_dict['fp_bps'],
+            # 'val fp-bps': result_dict['fp_bps'],
             'val heldin loss': result_dict['heldin_loss']
         })
     elif config['wandb']['log_local']:

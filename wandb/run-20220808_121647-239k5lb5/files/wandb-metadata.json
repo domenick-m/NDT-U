@@ -1,0 +1,26 @@
+{
+    "os": "Linux-5.13.0-51-generic-x86_64-with-glibc2.10",
+    "python": "3.8.5",
+    "heartbeatAt": "2022-08-08T16:16:47.949120",
+    "startedAt": "2022-08-08T16:16:47.294795",
+    "docker": null,
+    "gpu": "NVIDIA A40",
+    "gpu_count": 6,
+    "cpu_count": 128,
+    "cuda": null,
+    "args": [
+        "-y"
+    ],
+    "state": "running",
+    "program": "ar_train.py",
+    "codePath": "ar_train.py",
+    "git": {
+        "remote": "https://github.com/domenick-m/NDT-U",
+        "commit": "b0ea024f26fb208ce5dab457539e997bc04b7d80"
+    },
+    "email": "dmifsud4@gmail.com",
+    "root": "/home/dmifsud/Projects/NDT-U",
+    "host": "gpu2",
+    "username": "dmifsud",
+    "executable": "/home/dmifsud/miniconda3/envs/ndtu/bin/python"
+}

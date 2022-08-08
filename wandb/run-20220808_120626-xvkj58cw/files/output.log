@@ -1,0 +1,12 @@
+wandb URL: https://wandb.ai/domenick-m/no-val-dropout-test/runs/xvkj58cw
+grateful-universe-3                     --                 GPU:0                  --                                              n_parameters: 822,834
+    main()/ 20000                                                                                                                            0% - ETR:?
+  File "ar_train.py", line 75, in main
+    run_single(config, device, model_name)
+  File "ar_train.py", line 110, in run_single
+    train(model, train_dataloader, val_dataloader, device)
+  File "ar_train.py", line 326, in train
+    upload_print_results(config, results_dict, progress_bar, save_path)
+  File "/home/dmifsud/Projects/NDT-U/setup.py", line 313, in upload_print_results
+    fpbps = '[val fp-bps: '+"{:.3f}".format(result_dict['fp_bps'])+']'
+KeyError: 'fp_bps'

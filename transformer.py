@@ -266,7 +266,6 @@ class Transformer(Module):
         spikes = self.embedding_dropout(spikes)
         attn_mask = self.get_attn_mask(spikes) # [T, T]
         output = self.encoder(spikes, attn_mask)
-        # if self.training: output = self.rate_dropout(output) ? Should this be used
         output = self.rate_dropout(output)
         pred_rates = self.decoder(output).permute(1, 0, 2)  # [T x B x N] ->  [B x T x N]
         if labels == None: return pred_rates
