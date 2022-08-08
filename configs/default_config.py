@@ -96,7 +96,7 @@ config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.log_freq = 250 # Epochs between each gradient log of the model by wandb
 config.wandb.log_local = False # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt
 
-config.wandb.project = 'no-val-dropout-test' # The wandb project the run should be stored in
+config.wandb.project = 'ar_sweep' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 
 config.wandb.silent = 'true' # ['true', 'false'] If 'true' wandb does not print anything
@@ -110,11 +110,18 @@ config.wandb.alt_wandb_dirs = [ # If the host name is in the list, then store wa
 # The hyperparameters to search through if config.train.sweep_enabled is True or the --sweep CLI arg is used
 config.wandb.sweep = CN()
 config.wandb.sweep.setup = CN()
-config.wandb.sweep.setup.seed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+# config.wandb.sweep.setup.seed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 config.wandb.sweep.train = CN()
-# config.wandb.sweep.train.warmup_steps = [1500, 5000]
+config.wandb.sweep.train.warmup_steps = [100, 500, 1000, 2000]
+config.wandb.sweep.train.ramp_start = [50, 100, 500, 1000]
+config.wandb.sweep.train.ramp_end = [500, 1000, 2000]
+config.wandb.sweep.train.epochs = [500, 1000, 2000, 5000]
+config.wandb.sweep.train.init_lr = [0.01, 0.001, 0.005, 0.05]
+config.wandb.sweep.train.batch_size = [64, 512, 1024, 2048, 4096]
 config.wandb.sweep.model = CN()
-# config.wandb.sweep.model.n_heads = [1, 2]
+config.wandb.sweep.model.hidden_size = [64, 128, 256]
+config.wandb.sweep.model.context_forward = [7, 30]
+config.wandb.sweep.model.context_backward = [7, 30]
 '''
 ────────────────────────────────────────────────────────────────────────────────
                                    FUNCTIONS
