@@ -205,7 +205,7 @@ def train(model, train_dataloader, val_dataloader, device):
         config['setup']['save_model'] or log_local) else None
 
     optimizer = get_optimizer(model, config)
-    scheduler = get_scheduler(optimizer, config)
+    scheduler = get_scheduler(optimizer, config, len(train_dataloader))
 
     max_co_bps = float('-inf') # used to get the best.pt model
     # The progress bar shows how much time is remaining and current report

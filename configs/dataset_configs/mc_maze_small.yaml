@@ -26,7 +26,7 @@ setup:
   seed: 1
   subset_seed: 404
 train:
-  batch_size: 2048
+  batch_size: 1024
   early_stopping: false
   epochs: 2000
   es_min_bps: 0.125
@@ -36,7 +36,7 @@ train:
   max_grad_norm: 200.0
   optimizer: AdamW
   val_ratio: 0.05
-  ramp_end: 1000
+  ramp_end: 2000
   ramp_start: 500
   scheduler: Cosine
   sweep_enabled: false

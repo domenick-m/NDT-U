@@ -187,7 +187,7 @@ class ScaleNorm(nn.Module):
         return x * norm
 
 
-def get_scheduler(optimizer, config):
+def get_scheduler(optimizer, config, dataloader_size):
     ''' Gets the scheduler.
 
     Args:
@@ -195,10 +195,11 @@ def get_scheduler(optimizer, config):
         config (dict): A config object.
     '''
     scheduler = None
+    total = dataloader_size * config['train']['epochs']
     if config['train']['scheduler'] == 'Cosine':
         scheduler = WarmupCosineSchedule(optimizer,
             warmup_steps=config['train']['warmup_steps'],
-            t_total=config['train']['epochs'])
+            t_total=total)
     # elif config['train']['scheduler'] == 'new scheduler':
     #     scheduler = new scheduler(optimizer,)
     return scheduler
