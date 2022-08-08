@@ -191,6 +191,9 @@ def train(model, train_dataloader, val_dataloader, device):
         device (torch.device): torch.device object containing the GPU to train
                                on.
     '''
+    scaler = torch.cuda.amp.GradScaler()
+
+
     config = model.config
     if config['wandb']['log']:
         wandb.watch(model, log_freq=config['wandb']['log_freq'])
@@ -229,20 +232,27 @@ def train(model, train_dataloader, val_dataloader, device):
                 # forward_spikes, # B, T, N
             )
             # Dont need rates only loss
-            masked_loss, _ = model(masked_spikes, labels)
-            loss = masked_loss.mean()
+            with torch.cuda.amp.autocast():
+                masked_loss, _ = model(masked_spikes, labels)
+                loss = masked_loss.mean()
 
             if config['wandb']['log']:
                 wandb.log({"train loss": loss})
-
-            loss.backward()
+                
+            scaler.scale(loss).backward()
+            # loss.backward()
 
             nn.utils.clip_grad_norm_(
                 model.parameters(),
                 config['train']['max_grad_norm'])
 
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
+
+            # optimizer.step()
             optimizer.zero_grad(set_to_none=True)
+            if scheduler != None:
+                scheduler.step()
         # Run on the validation set every 'val_interval' epochs
         if (epoch % config['train']['val_interval'] == 0 and
             config['train']['val_type'] != 'none'
@@ -335,9 +345,8 @@ def train(model, train_dataloader, val_dataloader, device):
                 progress_bar.close()
                 print('\n\n! Early Stopping !\n')
                 break
+        wandb.log({'lr':scheduler.optimizer.param_groups[0]['lr'] })
 
-        if scheduler != None:
-            scheduler.step()
         progress_bar.update(1)
     progress_bar.display('', pos=2)
     progress_bar.close()

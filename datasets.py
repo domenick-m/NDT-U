@@ -221,6 +221,7 @@ class Dataset(data.Dataset):
         return data.DataLoader(self,
             batch_size=self.config['train']['batch_size'],
             generator=generator,
+            pin_memory=True,
             shuffle=shuffle)
 
 def verify_dataset(config):
