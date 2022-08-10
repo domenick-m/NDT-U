@@ -127,7 +127,7 @@ config.wandb.alt_wandb_dirs = [ # If the host name is in the list, then store wa
 
 config.wandb.sweep = CN()
 config.wandb.sweep.train = CN()
-config.wandb.sweep.train.epochs = [5000, 10000, 20000, 50000]
+config.wandb.sweep.train.epochs = [5000, 10000, 20000]
 config.wandb.sweep.train.batch_size = [32, 64, 128, 256]
 config.wandb.sweep.train.warmup_steps = [50, 500, 1000, 1500, 1750, 2000, 3000, 4000, 5000]
 config.wandb.sweep.train.init_lr = [0.01, 0.001, 0.005, 0.0005, 0.0005, 0.00005, 0.000005]
