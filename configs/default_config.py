@@ -12,7 +12,7 @@ from yacs.config import CfgNode as CN
 '''
 config = CN()
 config.setup = CN()
-config.setup.dataset = 'mc_maze_small' # ['area2_bump', 'dmfc_rsg', 'mc_maze', 'mc_maze_small', 'mc_maze_medium', 'mc_maze_large', 'mc_rtt']
+config.setup.dataset = 'mc_rtt' # ['area2_bump', 'dmfc_rsg', 'mc_maze', 'mc_maze_small', 'mc_maze_medium', 'mc_maze_large', 'mc_rtt']
 config.setup.seed = 100 # Seed for initializing model, randomization of dataloader, etc..
 config.setup.subset_seed = 404 # Seed for taking a random validation subset
 
@@ -126,6 +126,7 @@ config.wandb.alt_wandb_dirs = [ # If the host name is in the list, then store wa
 # config.wandb.sweep.model.context_backward = [7, 30]
 
 config.wandb.sweep = CN()
+config.wandb.sweep.setup = CN()
 config.wandb.sweep.train = CN()
 config.wandb.sweep.train.epochs = [5000, 10000, 20000]
 config.wandb.sweep.train.batch_size = [32, 64, 128, 256]
