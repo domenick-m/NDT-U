@@ -17,6 +17,60 @@ from setup import get_norm
 '''───────────────────────────── transformer.py ─────────────────────────────'''
 # This file contains the NDT-U model.
 
+class MHA(Module):
+    def __init__(self, config, n_neurons):
+        super(MHA, self).__init__()
+        self.config = config
+
+        # If using undivided attention, each head needs 'input_dim' dimensions
+        self.packed_dim_size = n_neurons * config['model']['n_heads'] if (
+            config['model']['undivided_attn']
+        ) else n_neurons
+
+        # MHA uses a packed tensor, Queries Keys and Values all share the same weight matrix
+        self.in_proj_weight = Parameter(torch.empty((3 * self.packed_dim_size, n_neurons)))
+        self.in_proj_bias = Parameter(torch.empty(3 * self.packed_dim_size))
+        self.out_proj = NDQL(self.packed_dim_size, n_neurons)
+
+        # Init QKV weights and all biases
+        xavier_uniform_(self.in_proj_weight)
+        constant_(self.in_proj_bias, 0.)
+        constant_(self.out_proj.bias, 0.)
+
+    def forward(self, src, attn_mask=None):
+        # Use the same weight matrix then seperate 
+        self.q, self.k, self.v = torch._C._nn.linear(src, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
+
+        # If using undivided attention the view shape is [T x (B * n_heads) x N]
+        self.view_shape = (src.shape[0], src.shape[1] * self.config['model']['n_heads'], src.shape[2]) if (
+            self.config['model']['undivided_attn']
+        ) else (
+            # If using standard MHA the view shape is [T x (B * n_heads) x (N // n_heads)]
+            (src.shape[0], src.shape[1] * self.config['model']['n_heads'], src.shape[2] // self.config['model']['n_heads'])
+        )
+        self.q = self.q.contiguous().view(*self.view_shape).transpose(0, 1) / math.sqrt(self.view_shape[2])
+        self.k = self.k.contiguous().view(*self.view_shape).transpose(0, 1)
+        self.v = self.v.contiguous().view(*self.view_shape).transpose(0, 1)
+
+        # Create the attention matrix [T x T]
+        self.attn = torch.bmm(self.q, self.k.transpose(-2, -1))
+
+        # Restrict how far in past / future each timestep can attend to
+        if attn_mask is not None:
+            self.attn += attn_mask
+
+        # Apply softmax and dropout to attention matrix    
+        self.attn = F.softmax(self.attn, dim=-1)
+        if self.training:
+            self.attn = F.dropout(self.attn, p=self.config['model']['dropout_attention'] )
+        
+        # Multiply attention matrix (QK) and values (V)
+        self.attn_output = torch.bmm(self.attn, self.v).transpose(0, 1)
+        self.attn_output = self.attn_output.contiguous().view(src.shape[0] * src.shape[1], self.packed_dim_size)
+
+        # Project to proper size ([T x B x N]) and return
+        return torch._C._nn.linear(self.attn_output, self.out_proj.weight, self.out_proj.bias).view(*src.shape)
+
 class UndividedMultiheadAttention(Module):
     '''An altered version of pytorch's MultiheadAttention that has the full
     embedding (n_neurons) size availiable in each head.
@@ -106,7 +160,8 @@ class EncoderLayer(TransformerEncoderLayer):
             dropout=config['model']['dropout'],
             activation=config['model']['activation']
         )
-        self.self_attn = UndividedMultiheadAttention(config, n_neurons)
+        self.self_attn = MHA(config, n_neurons)
+        # self.self_attn = UndividedMultiheadAttention(config, n_neurons)
 
         self.norm1 = get_norm(config, n_neurons)
         self.norm2 = get_norm(config, n_neurons)

@@ -1,2 +1,4 @@
 /runs
-/wandb
+/wandb/*
+/data
+*/__pycache__
