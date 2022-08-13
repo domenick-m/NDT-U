@@ -13,7 +13,7 @@ import numpy as np
 import torch.nn as nn
 from nlb_tools.evaluation import bits_per_spike
 #────#
-from ar_transformer import Transformer
+from ar_new_transformer import Transformer
 from ar_datasets import verify_dataset, get_dataloaders
 from setup import (set_seeds,
                    parse_args,
@@ -259,8 +259,9 @@ def train(model, train_dataloader, val_dataloader, device):
         ):
             model.eval() # turns off dropout
 
-            all_loss, heldout_loss, forward_loss, heldin_loss = [], [], [], []
+            all_loss, heldout_loss, lt_loss, heldin_loss = [], [], [], []
             eval_rates, eval_ho_spikes, eval_fw_spikes = [], [], []
+            eval_lt_rates, eval_ho_lt_spikes = [], []
             results_dict = {}
 
             for step, (spikes, heldout_spikes) in enumerate(val_dataloader):
@@ -277,7 +278,9 @@ def train(model, train_dataloader, val_dataloader, device):
                     loss, rates = model(spikes, labels)
                     all_loss.append(loss)
                     eval_rates.append(rates)
+                    eval_lt_rates.append(rates[:, -1, :])
                     eval_ho_spikes.append(heldout_spikes)
+                    eval_ho_lt_spikes.append(heldout_spikes[:, -1, :])
                     # eval_fw_spikes.append(forward_spikes)
 
                     heldout_masked = labels.clone()
@@ -298,8 +301,10 @@ def train(model, train_dataloader, val_dataloader, device):
 
             eval_rates = torch.cat(eval_rates, dim=0).exp() # turn into tensor and use exponential on rates
             eval_ho_spikes = torch.cat(eval_ho_spikes, dim=0).cpu().numpy() # turn into tensor
+            eval_lt_rates = torch.cat(eval_lt_rates, dim=0).exp() # turn into tensor and use exponential on rates
+            # eval_ho_lt_spikes = torch.cat(eval_ho_lt_spikes, dim=0).cpu().numpy() # turn into tensor
+            eval_ho_lt_spikes = torch.unsqueeze(torch.cat(eval_ho_lt_spikes, dim=0), dim=0).cpu().numpy() # turn into tensor
             # eval_fw_spikes = torch.cat(eval_fw_spikes, dim=0).cpu().numpy() # turn into tensor
-
             all_loss = torch.cat(all_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
             heldout_loss = torch.cat(heldout_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
             heldin_loss = torch.cat(heldin_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
@@ -311,8 +316,9 @@ def train(model, train_dataloader, val_dataloader, device):
 
             hldt_splt = [model.n_heldin, heldout_spikes.size(-1)]
             eval_rates_heldout = torch.split(eval_rates, hldt_splt, -1)[1].cpu().numpy()
-
+            eval_rates_lt_heldout = torch.unsqueeze(torch.split(eval_lt_rates, hldt_splt, -1)[1], dim=0).cpu().numpy()
             co_bps = float(bits_per_spike(eval_rates_heldout, eval_ho_spikes))
+            lt_co_bps = float(bits_per_spike(eval_rates_lt_heldout, eval_ho_lt_spikes))
             # fp_bps = float(bits_per_spike(eval_rates_forward, eval_fw_spikes))
             val_loss = np.mean(all_loss)
             # Save current model if it scores higher than the max_co_bps and is past the save_min_bps
@@ -328,8 +334,8 @@ def train(model, train_dataloader, val_dataloader, device):
                 'val_loss': val_loss,
                 'heldout_loss': np.mean(heldout_loss),
                 'co_bps': co_bps,
-                'forward_loss': np.mean(forward_loss),
-                # 'fp_bps': fp_bps,
+                'forward_loss': 0.0,
+                'lt_co_bps': lt_co_bps,
                 'heldin_loss': np.mean(heldin_loss)
             }
             # Update the report above the progress bar and upload to wandb

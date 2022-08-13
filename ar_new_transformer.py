@@ -274,7 +274,7 @@ class Transformer(Module):
         self.name = name
 
         self.n_heldin = dataset.n_heldin
-        self.n_neurons = dataset.n_neurons
+        self.n_neurons = config['model']['emb_size']
         self.tr_length = dataset.tr_length
         self.full_length = dataset.full_length
 
@@ -288,9 +288,10 @@ class Transformer(Module):
         self.register_buffer('pe', position.long())
         self.pos_embedding = nn.Embedding(self.full_length, self.n_neurons)
 
+        self.pre_encoder = nn.Linear(dataset.n_neurons, config['model']['emb_size'])
         encoder_layer = EncoderLayer(config, self.n_neurons, self.full_length)
-        self.encoder = Encoder(config, self.n_neurons, encoder_layer, self.full_length)
-        self.decoder = nn.Linear(self.n_neurons, self.n_neurons)
+        self.encoder = Encoder(config, config['model']['emb_size'], encoder_layer, self.full_length)
+        self.decoder = nn.Linear(config['model']['emb_size'], dataset.n_neurons)
 
         self.attn_mask = None
         self.loss_prob_mask = None
@@ -300,6 +301,7 @@ class Transformer(Module):
         self.classifier = nn.PoissonNLLLoss(reduction='none')
 
         self.decoder.bias.data.zero_()
+        self.pre_encoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(
             -config['model']['initrange'], config['model']['initrange'])
 
@@ -319,6 +321,7 @@ class Transformer(Module):
             pred_rates (Tensor): The predicted rates. Size=[B, T, N]
         '''
         spikes = spikes.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
+        spikes = self.pre_encoder(spikes)
         spikes += self.pos_embedding(self.pe)
         spikes = self.embedding_dropout(spikes)
         attn_mask = self.get_attn_mask(spikes) # [T, T]

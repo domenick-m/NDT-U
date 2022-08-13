@@ -126,6 +126,21 @@ def get_dataloaders(config, mode):
         test_dataloader = test_data.get_dataloader(generator, shuffle=False)
         return trainval_dataloader, test_dataloader
 
+def chop_data(config, data):
+    chopped_data = []
+    for trial in data:
+        shape = (int((trial.shape[0] - (config['train']['seq_len'] - 1))), config['train']['seq_len'], trial.shape[-1])
+        strides = (trial.strides[0], trial.strides[0], trial.strides[1])
+        chopped_trial = np.lib.stride_tricks.as_strided(trial, shape=shape, strides=strides).copy().astype('f')
+        chopped_data.append(chopped_trial)
+    chopped_data = np.array(chopped_data)
+    return chopped_data.reshape((
+        chopped_data.shape[0] * chopped_data.shape[1], 
+        chopped_data.shape[2], 
+        chopped_data.shape[3]
+    ))
+
+
 class Dataset(data.Dataset):
     def __init__(self, config, filename, mode):
         '''init Dataset
@@ -140,6 +155,8 @@ class Dataset(data.Dataset):
             h5dict = h5_to_dict(h5file)
             self.config = config
 
+            self.chop = config['train']['seq_len'] > 0
+
             def set_sizes(self):
                 ''' Helper function that assigns the number of samples, trial
                 length, forward pass length, number of heldin neurons, and
@@ -148,29 +165,42 @@ class Dataset(data.Dataset):
                 self.n_samples = self.spikes_heldin.shape[0]
                 self.tr_length = self.spikes_heldin.shape[1]
                 self.fp_length = self.spikes_all_fp.shape[1]
-                self.full_length = self.tr_length + self.fp_length
+                self.full_length = self.tr_length if self.chop else self.tr_length + self.fp_length
                 self.n_heldin = self.spikes_heldin.shape[2]
                 self.n_heldout = self.spikes_heldout.shape[2]
                 self.n_neurons = self.n_heldin + self.n_heldout
 
             # train_val mode
             if mode == 'train':
-                self.spikes_heldin = torch.tensor(h5dict['train_spikes_heldin'].astype(np.float32))
-                self.spikes_heldout = torch.tensor(h5dict['train_spikes_heldout'].astype(np.float32))
-                self.spikes_all_fp = torch.tensor(h5dict['train_spikes_all_fp'].astype(np.float32))
+                spikes_heldin = h5dict['train_spikes_heldin'].astype(np.float32)
+                spikes_heldout = h5dict['train_spikes_heldout'].astype(np.float32)
+                spikes_all_fp = h5dict['train_spikes_all_fp'].astype(np.float32)
+
+                self.spikes_heldin = torch.tensor(chop_data(config, spikes_heldin) if self.chop else spikes_heldin)
+                self.spikes_heldout = torch.tensor(chop_data(config, spikes_heldout) if self.chop else spikes_heldout)
+                self.spikes_all_fp = torch.tensor(spikes_all_fp) if not self.chop else torch.zeros_like(self.spikes_heldin)
                 set_sizes(self)
 
             if mode == 'val':
-                self.spikes_heldin = torch.tensor(h5dict['eval_spikes_heldin'].astype(np.float32))
-                self.spikes_heldout = torch.tensor(h5dict['eval_spikes_heldout'].astype(np.float32))
-                self.spikes_all_fp = torch.tensor(h5dict['eval_spikes_all_fp'].astype(np.float32))
+                spikes_heldin = h5dict['eval_spikes_heldin'].astype(np.float32)
+                spikes_heldout = h5dict['eval_spikes_heldout'].astype(np.float32)
+                spikes_all_fp = h5dict['eval_spikes_all_fp'].astype(np.float32)
+
+
+                self.spikes_heldin = torch.tensor(chop_data(config, spikes_heldin) if self.chop else spikes_heldin)
+                self.spikes_heldout = torch.tensor(chop_data(config, spikes_heldout) if self.chop else spikes_heldout)
+                self.spikes_all_fp = torch.tensor(spikes_all_fp) if not self.chop else torch.zeros_like(self.spikes_heldin)
                 set_sizes(self)
 
             # trainval mode
             if mode == 'trainval':
-                self.spikes_heldin = torch.tensor(h5dict['trainval_spikes_heldin'].astype(np.float32))
-                self.spikes_heldout = torch.tensor(h5dict['trainval_spikes_heldout'].astype(np.float32))
-                self.spikes_all_fp = torch.tensor(h5dict['trainval_spikes_all_fp'].astype(np.float32))
+                spikes_heldin = h5dict['trainval_spikes_heldin'].astype(np.float32)
+                spikes_heldout = h5dict['trainval_spikes_heldout'].astype(np.float32)
+                spikes_all_fp = h5dict['trainval_spikes_all_fp'].astype(np.float32)
+
+                self.spikes_heldin = torch.tensor(chop_data(config, spikes_heldin) if self.chop else spikes_heldin)
+                self.spikes_heldout = torch.tensor(chop_data(config, spikes_heldout) if self.chop else spikes_heldout)
+                self.spikes_all_fp = torch.tensor(spikes_all_fp) if not self.chop else torch.zeros_like(self.spikes_heldin)
                 set_sizes(self)
 
             # test mode
@@ -210,7 +240,7 @@ class Dataset(data.Dataset):
         '''
         return (
             self.spikes_heldin[index],
-            self.spikes_heldout[index] ,
+            self.spikes_heldout[index],
             self.spikes_all_fp[index]
         )
 
@@ -221,7 +251,7 @@ class Dataset(data.Dataset):
         return data.DataLoader(self,
             batch_size=self.config['train']['batch_size'],
             generator=generator,
-            pin_memory=True,
+            # pin_memory=True,
             shuffle=shuffle)
 
 def verify_dataset(config):

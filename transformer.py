@@ -71,71 +71,6 @@ class MHA(Module):
         # Project to proper size ([T x B x N]) and return
         return torch._C._nn.linear(self.attn_output, self.out_proj.weight, self.out_proj.bias).view(*src.shape)
 
-class UndividedMultiheadAttention(Module):
-    '''An altered version of pytorch's MultiheadAttention that has the full
-    embedding (n_neurons) size availiable in each head.
-
-     Attributes:
-        n_heads (int): Number of heads.
-        dropout (float): Attention Dropout percentage.
-        neurons_x_heads (int): n_neurons * n_heads
-        in_proj_weight (Parameter): Size=[3 * neurons_x_heads, n_neurons]
-        in_proj_bias (Parameter): Size=[3 * neurons_x_heads]
-        out_proj (NDQL): Size=[n_neurons, neurons_x_heads]
-    '''
-
-    def __init__(self, config, n_neurons):
-        '''init UndividedMultiheadAttention
-
-        Args:
-            config (dict): The config.
-            n_neurons (int): Number of neurons.
-        '''
-        super(UndividedMultiheadAttention, self).__init__()
-
-        self.n_heads = config['model']['n_heads']
-        self.dropout = config['model']['dropout_attention']
-        self.neurons_x_heads = n_neurons * self.n_heads
-
-        self.in_proj_weight = Parameter(torch.empty((3 * self.neurons_x_heads, n_neurons)))
-        self.in_proj_bias = Parameter(torch.empty(3 * self.neurons_x_heads))
-        self.out_proj = NDQL(self.neurons_x_heads, n_neurons)
-
-        xavier_uniform_(self.in_proj_weight)
-        constant_(self.in_proj_bias, 0.)
-        constant_(self.out_proj.bias, 0.)
-
-    def forward(self, src, attn_mask=None):
-        '''Forward pass.
-
-        Args:
-            src (Tensor): A batch of data. Size=[T, B, N]
-            attn_mask (Tensor, Optional): How far each timestep can attend to.
-                                          Size=[T, T]
-        Returns:
-            result (Tensor): The output of the UMHA. Size=[T, B, N]
-        '''
-        linear = torch._C._nn.linear
-        seq_len, bsz, n_neurons = src.shape
-        q, k, v = linear(src, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
-
-        q = q.contiguous().view(seq_len, bsz * self.n_heads, n_neurons).transpose(0, 1)
-        k = k.contiguous().view(seq_len, bsz * self.n_heads, n_neurons).transpose(0, 1)
-        v = v.contiguous().view(seq_len, bsz * self.n_heads, n_neurons).transpose(0, 1)
-
-        q = q / math.sqrt(n_neurons)
-        attn = torch.bmm(q, k.transpose(-2, -1))
-        if attn_mask is not None:
-            attn += attn_mask
-        attn = F.softmax(attn, dim=-1)
-        if self.training:
-            attn = F.dropout(attn, p=self.dropout)
-        attn_output = torch.bmm(attn, v).transpose(0, 1)
-        attn_output = attn_output.contiguous().view(seq_len * bsz, self.neurons_x_heads)
-
-        result = linear(attn_output, self.out_proj.weight, self.out_proj.bias)
-        return result.view(seq_len, bsz, n_neurons)
-
 class EncoderLayer(TransformerEncoderLayer):
     '''A simplified version of pytorch's TransformerEncoderLayer.
 
@@ -367,15 +302,18 @@ class Transformer(Module):
         batch = batch.clone() # make sure we don't corrupt the input data (which is stored in memory)
         labels = batch.clone()
         config = self.config
+
         # Expand if expand probability is greater than the number generated.
         should_expand = config['train']['mask_max_span'] > 1 and expand_p > 0.0 and torch.rand(1).item() < expand_p
         width =  torch.randint(1, config['train']['mask_max_span'] + 1, (1, )).item() if should_expand else 1
         loss_ratio = config['model']['loss_ratio'] if width == 1 else config['model']['loss_ratio'] / width
+
         # Which indicies shold the loss be computed with
         if self.loss_prob_mask is None or self.loss_prob_mask.size() != labels.size():
             timestep_shape = labels[:, :, 0].shape # N x T
             self.loss_prob_mask = torch.full(timestep_shape, loss_ratio, device=batch.device, dtype=torch.float32)
         loss_mask = torch.bernoulli(self.loss_prob_mask)
+
         # Expand
         if width > 1:
             kernel = torch.ones(width, device=loss_mask.device).view(1, 1, -1)
@@ -386,12 +324,14 @@ class Transformer(Module):
 
         loss_mask = loss_mask.bool().unsqueeze(2).expand_as(labels)
         labels[~loss_mask] = -100
+
         # Zero mask
         if self.zero_prob_mask is None or self.zero_prob_mask.size() != labels.size():
             zero_mask_ratio = config['model']['mask_ratio']
             self.zero_prob_mask = torch.full(labels.shape, zero_mask_ratio, device=batch.device, dtype=torch.float32)
         indices_zero_masked = torch.bernoulli(self.zero_prob_mask).bool() & loss_mask
         batch[indices_zero_masked] = 0
+
         # Randomize
         if self.random_prob_mask is None or self.random_prob_mask.size() != labels.size():
             randomize_ratio = config['model']['random_ratio']
@@ -399,10 +339,12 @@ class Transformer(Module):
         indices_randomized = torch.bernoulli(self.random_prob_mask).bool() & loss_mask & ~indices_zero_masked
         random_spikes = torch.randint(batch.max().long(), labels.shape, dtype=torch.long, device=batch.device)
         batch[indices_randomized] = random_spikes.float()[indices_randomized]
+
         # Add fake heldout and forward
         batch = torch.cat([batch, torch.zeros_like(heldout_spikes)], -1)
         labels = torch.cat([labels, heldout_spikes], -1)
-        batch = torch.cat([batch, torch.zeros_like(forward_spikes)], 1)
-        labels = torch.cat([labels, forward_spikes], 1)
+        if not config['train']['seq_len'] > 0:
+            batch = torch.cat([batch, torch.zeros_like(forward_spikes)], 1)
+            labels = torch.cat([labels, forward_spikes], 1)
 
         return batch, labels

@@ -94,6 +94,11 @@ def set_sweep_config(config, arg_dict):
         data = yaml.dump(cfg_node_to_dict(config), yamlfile)
     return sweep_id
 
+def plot_rates(rates):
+    with open('test.npy', 'wb') as f:
+        np.save(f, np.array(rates.cpu()))
+    
+
 def setup_runs_folder(config, model, mode):
     '''Creates a folder for a run.
 
@@ -311,16 +316,17 @@ def upload_print_results(config, result_dict, progress_bar, save_path):
     epoch = '[Epoch: '+result_dict['epoch']+']'
     loss = '[val loss: '+"{:.4f}".format(result_dict['val_loss'])+']'
     cobps = '[val co-bps: '+"{:.3f}".format(result_dict['co_bps'])+']'
-    # fpbps = '[val fp-bps: '+"{:.3f}".format(result_dict['fp_bps'])+']'
+    fpbps = '[val fp-bps: '+"{:.3f}".format(result_dict['fp_bps'])+']'
     report = epoch + '   ' + loss + '   ' + cobps + '   ' 
-    # report = epoch + '   ' + loss + '   ' + cobps + '   ' + fpbps
+    report = epoch + '   ' + loss + '   ' + cobps + '   ' + fpbps
     if config['wandb']['log']:
         wandb.log({
             'val loss': result_dict['val_loss'],
             'val heldout loss': result_dict['heldout_loss'],
             'val co-bps': result_dict['co_bps'],
             'val forward loss': result_dict['forward_loss'],
-            # 'val fp-bps': result_dict['fp_bps'],
+            'val fp-bps': result_dict['fp_bps'],
+            'val lt-co-bps': result_dict['lt_co_bps'],
             'val heldin loss': result_dict['heldin_loss']
         })
     elif config['wandb']['log_local']:
@@ -394,13 +400,13 @@ def print_train_configs(config, args):
         train_box[0], train_box[1], train_box[2],
         format_config('batch_size', config.train.batch_size),
         format_config('epochs', config.train.epochs),
+        format_config('seq_len', config.train.seq_len),
         format_config('early_stopping', config.train.early_stopping),
         format_config('es_min_bps', config.train.es_min_bps),
         format_config('optimizer', config.train.optimizer),
         format_config('scheduler', config.train.scheduler),
         format_config('warmup_steps', config.train.warmup_steps),
         format_config('init_lr', config.train.init_lr),
-        format_config('warmup_steps', config.train.warmup_steps),
         format_config('weight_decay', config.train.weight_decay),
         format_config('mask_max_span', config.train.mask_max_span),
         format_config('ramp_start', config.train.ramp_start),

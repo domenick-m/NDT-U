@@ -12,7 +12,7 @@ from yacs.config import CfgNode as CN
 '''
 config = CN()
 config.setup = CN()
-config.setup.dataset = 'mc_rtt' # ['area2_bump', 'dmfc_rsg', 'mc_maze', 'mc_maze_small', 'mc_maze_medium', 'mc_maze_large', 'mc_rtt']
+config.setup.dataset = 'mc_maze_small' # ['area2_bump', 'dmfc_rsg', 'mc_maze', 'mc_maze_small', 'mc_maze_medium', 'mc_maze_large', 'mc_rtt']
 config.setup.seed = 100 # Seed for initializing model, randomization of dataloader, etc..
 config.setup.subset_seed = 404 # Seed for taking a random validation subset
 
@@ -31,9 +31,9 @@ config.setup.runs_dir = 'runs/' # Where the train and test output data should be
 '''
 config.train = CN()
 
-config.train.chop_size = 60 # Number of samples to compute loss with
 
 config.train.batch_size = 64 # Number of samples to compute loss with
+config.train.seq_len = 60 # 0 is full trial, above 0 is sliding window (trials are chopped to that value)
 config.train.epochs = 20000 # Number of full passes through dataset
 
 config.train.val_interval = 10 # Epochs between running on the validation set
@@ -68,6 +68,8 @@ config.model.n_heads = 4 # The number of heads used in UndividedMultiheadAttenti
 config.model.n_layers = 6 # The number of EncoderLayers the Encoder should have
 config.model.hidden_size = 256 # The size of the linear layers in each EncoderLayer
 
+config.model.emb_size = 64 
+
 config.model.dropout = 0.4 # Overall dropout, used in EncoderLayer
 config.model.dropout_rates = 0.5 # Dropout of model output (rates)
 config.model.dropout_embedding = 0.7 # Dropout applied after pos_embedding is added
@@ -77,7 +79,7 @@ config.model.loss_ratio = 0.25 # Percentage of tokens that loss is computed with
 config.model.mask_ratio = 0.75 # Percentage of tokens being used to compute the loss are zero masked
 config.model.random_ratio = 1.0 # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
 
-config.model.undivided_attn = True # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
+config.model.undivided_attn = False # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
 
 config.model.norm = "scale" # ['layer', 'scale'] The normalization to be used in the EncoderLayers
 config.model.activation = "relu" # ['relu', 'gelu']
@@ -98,7 +100,7 @@ config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.log_freq = 250 # Epochs between each gradient log of the model by wandb
 config.wandb.log_local = False # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt
 
-config.wandb.project = 'rtt_test' # The wandb project the run should be stored in
+config.wandb.project = 'changes-test' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 
 config.wandb.silent = 'true' # ['true', 'false'] If 'true' wandb does not print anything

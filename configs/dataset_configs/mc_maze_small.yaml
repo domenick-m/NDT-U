@@ -22,13 +22,13 @@ setup:
   dataset: mc_maze_small
   log_eps: 1.0e-07
   runs_dir: runs/
-  save_min_bps: 0.25
+  save_min_bps: -1000.0
   seed: 1
   subset_seed: 404
 train:
   batch_size: 512
   early_stopping: true
-  epochs: 500
+  epochs: 20000
   es_min_bps: 0.0
   es_chk_pnt: 0.5
   init_lr: 0.01
