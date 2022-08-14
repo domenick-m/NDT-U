@@ -8,13 +8,13 @@ model:
   dropout_rates: 0.6
   hidden_size: 64
   initrange: 0.01
-  loss_ratio: 0.25
-  mask_ratio: 0.75
+  # loss_ratio: 0.25
+  # mask_ratio: 0.75
   max_spike_count: 20
   n_heads: 1
   n_layers: 5
   norm: layer
-  random_ratio: 1.0
+  # random_ratio: 1.0
   undivided_attn: false
   xavier: false
 setup:
@@ -30,7 +30,7 @@ setup:
   subset_seed: 404
 train:
   batch_size: 1024
-  chop_size: 60
+  # seq_len: 60
   early_stopping: true
   epochs: 20000
   es_chk_pnt: 0.5

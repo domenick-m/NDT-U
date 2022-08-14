@@ -163,7 +163,7 @@ class Dataset(data.Dataset):
                 heldin = h5dict['train_spikes_heldin'].astype(np.float32)
                 chopped_heldin = []
                 for i in heldin:
-                    chopped_heldin.append(chop(i, config['train']['chop_size']))
+                    chopped_heldin.append(chop(i, config['train']['seq_len']))
                 chopped_heldin = np.array(chopped_heldin)
                 chopped_heldin = chopped_heldin.reshape((
                     chopped_heldin.shape[0] * chopped_heldin.shape[1], 
@@ -175,7 +175,7 @@ class Dataset(data.Dataset):
                 heldout = h5dict['train_spikes_heldout'].astype(np.float32)
                 chopped_heldout = []
                 for i in heldout:
-                    chopped_heldout.append(chop(i, config['train']['chop_size']))
+                    chopped_heldout.append(chop(i, config['train']['seq_len']))
                 chopped_heldout = np.array(chopped_heldout)
                 chopped_heldout = chopped_heldout.reshape((
                     chopped_heldout.shape[0] * chopped_heldout.shape[1], 
@@ -193,7 +193,7 @@ class Dataset(data.Dataset):
                 heldin = h5dict['eval_spikes_heldin'].astype(np.float32)
                 chopped_heldin = []
                 for i in heldin:
-                    chopped_heldin.append(chop(i, config['train']['chop_size']))
+                    chopped_heldin.append(chop(i, config['train']['seq_len']))
                 chopped_heldin = np.array(chopped_heldin)
                 chopped_heldin = chopped_heldin.reshape((
                     chopped_heldin.shape[0] * chopped_heldin.shape[1], 
@@ -205,7 +205,7 @@ class Dataset(data.Dataset):
                 heldout = h5dict['eval_spikes_heldout'].astype(np.float32)
                 chopped_heldout = []
                 for i in heldout:
-                    chopped_heldout.append(chop(i, config['train']['chop_size']))
+                    chopped_heldout.append(chop(i, config['train']['seq_len']))
                 chopped_heldout = np.array(chopped_heldout)
                 chopped_heldout = chopped_heldout.reshape((
                     chopped_heldout.shape[0] * chopped_heldout.shape[1], 
@@ -274,7 +274,7 @@ class Dataset(data.Dataset):
         return data.DataLoader(self,
             batch_size=self.config['train']['batch_size'],
             generator=generator,
-            pin_memory=True,
+            # pin_memory=True,
             shuffle=shuffle)
 
 def verify_dataset(config):

@@ -316,16 +316,16 @@ def upload_print_results(config, result_dict, progress_bar, save_path):
     epoch = '[Epoch: '+result_dict['epoch']+']'
     loss = '[val loss: '+"{:.4f}".format(result_dict['val_loss'])+']'
     cobps = '[val co-bps: '+"{:.3f}".format(result_dict['co_bps'])+']'
-    fpbps = '[val fp-bps: '+"{:.3f}".format(result_dict['fp_bps'])+']'
+    # fpbps = '[val fp-bps: '+"{:.3f}".format(result_dict['fp_bps'])+']'
     report = epoch + '   ' + loss + '   ' + cobps + '   ' 
-    report = epoch + '   ' + loss + '   ' + cobps + '   ' + fpbps
+    # report = epoch + '   ' + loss + '   ' + cobps + '   ' + fpbps
     if config['wandb']['log']:
         wandb.log({
             'val loss': result_dict['val_loss'],
             'val heldout loss': result_dict['heldout_loss'],
             'val co-bps': result_dict['co_bps'],
-            'val forward loss': result_dict['forward_loss'],
-            'val fp-bps': result_dict['fp_bps'],
+            # 'val forward loss': result_dict['forward_loss'],
+            # 'val fp-bps': result_dict['fp_bps'],
             'val lt-co-bps': result_dict['lt_co_bps'],
             'val heldin loss': result_dict['heldin_loss']
         })

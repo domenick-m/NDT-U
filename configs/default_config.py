@@ -12,7 +12,7 @@ from yacs.config import CfgNode as CN
 '''
 config = CN()
 config.setup = CN()
-config.setup.dataset = 'mc_maze_small' # ['area2_bump', 'dmfc_rsg', 'mc_maze', 'mc_maze_small', 'mc_maze_medium', 'mc_maze_large', 'mc_rtt']
+config.setup.dataset = 'mc_rtt' # ['area2_bump', 'dmfc_rsg', 'mc_maze', 'mc_maze_small', 'mc_maze_medium', 'mc_maze_large', 'mc_rtt']
 config.setup.seed = 100 # Seed for initializing model, randomization of dataloader, etc..
 config.setup.subset_seed = 404 # Seed for taking a random validation subset
 
@@ -75,9 +75,9 @@ config.model.dropout_rates = 0.5 # Dropout of model output (rates)
 config.model.dropout_embedding = 0.7 # Dropout applied after pos_embedding is added
 config.model.dropout_attention = 0.5 # Dropout applied to the attention matrix in UndividedMultiheadAttention
 
-config.model.loss_ratio = 0.25 # Percentage of tokens that loss is computed with
-config.model.mask_ratio = 0.75 # Percentage of tokens being used to compute the loss are zero masked
-config.model.random_ratio = 1.0 # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
+config.model.loss_ratio = 1.0 # Percentage of tokens that loss is computed with
+config.model.mask_ratio = 0.2 # Percentage of tokens being used to compute the loss are zero masked
+config.model.random_ratio = 0.5 # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
 
 config.model.undivided_attn = False # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
 
@@ -100,7 +100,7 @@ config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.log_freq = 250 # Epochs between each gradient log of the model by wandb
 config.wandb.log_local = False # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt
 
-config.wandb.project = 'changes-test' # The wandb project the run should be stored in
+config.wandb.project = 'ar-rtt-test' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 
 config.wandb.silent = 'true' # ['true', 'false'] If 'true' wandb does not print anything

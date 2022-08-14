@@ -427,5 +427,5 @@ def unpack(path, dataset, progress_bar):
     progress_bar.update(10)
     # Delete the .nwb files
     remove_path = path + dataset + '_'
-    for trial_type in ['train', 'test']:
-        os.remove(remove_path + trial_type + '.nwb')
+    # for trial_type in ['train', 'test']:
+        # os.remove(remove_path + trial_type + '.nwb')
