@@ -15,7 +15,7 @@ model:
   n_layers: 5
   norm: layer
   random_ratio: 1.0
-  undivided_attn: false
+  undivided_attn: true
   xavier: false
 setup:
   config_dir: configs/

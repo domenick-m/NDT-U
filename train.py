@@ -2,9 +2,11 @@
 # Author: Domenick Mifsud
 #───────#
 import os
+import gc
 import sys
 import time
 import shutil
+
 from glob import glob
 #────#
 import torch
@@ -39,6 +41,7 @@ from configs.default_config import (get_config,
 # be found by running 'python train.py -h'.
 
 def main():
+    print('hello')
     # Parse arguments
     arg_dict = parse_args(sys.argv[1:])
     # Overwrite default config with CLI args and dataset_config
@@ -116,6 +119,7 @@ def run_sweep():
     run. Cannot have any arguments!
     '''
     device = torch.device('cuda:0') # no args allowed, create local variable
+    torch.cuda.empty_cache()
     wandb.init(
         dir=get_wandb_dir(),
         config=get_config_dict())
@@ -141,9 +145,19 @@ def run_sweep():
     dataset = train_dataloader.dataset # dataset contains all the variables from the Dataset object
     if config['train']['val_type'] == 'random':
         dataset = dataset.dataset # subsets have the object hidden one level further
+        
+    try:
+        model = Transformer(config, dataset, wandb.run.name).to(device)
+        train(model, train_dataloader, val_dataloader, device)
 
-    model = Transformer(config, dataset, wandb.run.name).to(device)
-    train(model, train_dataloader, val_dataloader, device)
+    except RuntimeError as e:
+        del train_dataloader
+        del val_dataloader
+        del model
+        del dataset
+        gc.collect()
+        torch.cuda.empty_cache()
+    
 
 def add_sweep_agent(config, id=None):
     '''Adds an agent to a wandb sweep. If no id is supplied then prompt the user
@@ -181,7 +195,7 @@ def add_sweep_agent(config, id=None):
             config['train']['sweep_type'] != 'grid'
         ) else None
     )
-
+    torch.cuda.empty_cache()
 
 def train(model, train_dataloader, val_dataloader, device):
     ''' The train function used by all training types (single, sweep).
