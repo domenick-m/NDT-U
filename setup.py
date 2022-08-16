@@ -388,7 +388,7 @@ def print_train_configs(config, args):
         format_config('dropout_embedding', config.model.dropout_embedding),
         format_config('dropout_attention', config.model.dropout_attention),
         format_config('activation', config.model.activation),
-        format_config('norm', config.model.norm),
+        format_config('emb_size', config.model.emb_size),
         format_config('initrange', config.model.initrange),
         format_config('context_forward', config.model.context_forward),
         format_config('context_backward', config.model.context_backward),

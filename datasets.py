@@ -128,12 +128,18 @@ def get_dataloaders(config, mode):
 
 def chop_data(config, data):
     chopped_data = []
+    # data = np.concatenate(data, axis=0)
     for trial in data:
+        # print(trial.shape)
         shape = (int((trial.shape[0] - (config['train']['seq_len'] - 1))), config['train']['seq_len'], trial.shape[-1])
         strides = (trial.strides[0], trial.strides[0], trial.strides[1])
         chopped_trial = np.lib.stride_tricks.as_strided(trial, shape=shape, strides=strides).copy().astype('f')
         chopped_data.append(chopped_trial)
+    # shape = (int((data.shape[0] - (config['train']['seq_len'] - 1))), config['train']['seq_len'], data.shape[-1])
+    # strides = (data.strides[0], data.strides[0], data.strides[1])
+    # chopped_data = np.lib.stride_tricks.as_strided(data, shape=shape, strides=strides).copy().astype('f')
     chopped_data = np.array(chopped_data)
+    # return chopped_data
     return chopped_data.reshape((
         chopped_data.shape[0] * chopped_data.shape[1], 
         chopped_data.shape[2], 
@@ -181,16 +187,24 @@ class Dataset(data.Dataset):
                 self.spikes_all_fp = torch.tensor(spikes_all_fp) if not self.chop else torch.zeros_like(self.spikes_heldin)
                 set_sizes(self)
 
+                self.spikes_heldin = self.spikes_heldin.to(torch.device('cuda:0'))
+                self.spikes_heldout = self.spikes_heldout.to(torch.device('cuda:0'))
+                self.spikes_all_fp = self.spikes_all_fp.to(torch.device('cuda:0'))
+
             if mode == 'val':
                 spikes_heldin = h5dict['eval_spikes_heldin'].astype(np.float32)
                 spikes_heldout = h5dict['eval_spikes_heldout'].astype(np.float32)
                 spikes_all_fp = h5dict['eval_spikes_all_fp'].astype(np.float32)
-
+                self.spikes_pre_chop = spikes_heldin
 
                 self.spikes_heldin = torch.tensor(chop_data(config, spikes_heldin) if self.chop else spikes_heldin)
                 self.spikes_heldout = torch.tensor(chop_data(config, spikes_heldout) if self.chop else spikes_heldout)
                 self.spikes_all_fp = torch.tensor(spikes_all_fp) if not self.chop else torch.zeros_like(self.spikes_heldin)
                 set_sizes(self)
+
+                self.spikes_heldin = self.spikes_heldin.to(torch.device('cuda:0'))
+                self.spikes_heldout = self.spikes_heldout.to(torch.device('cuda:0'))
+                self.spikes_all_fp = self.spikes_all_fp.to(torch.device('cuda:0'))
 
             # trainval mode
             if mode == 'trainval':
@@ -202,6 +216,10 @@ class Dataset(data.Dataset):
                 self.spikes_heldout = torch.tensor(chop_data(config, spikes_heldout) if self.chop else spikes_heldout)
                 self.spikes_all_fp = torch.tensor(spikes_all_fp) if not self.chop else torch.zeros_like(self.spikes_heldin)
                 set_sizes(self)
+
+                self.spikes_heldin = self.spikes_heldin.to(torch.device('cuda:0'))
+                self.spikes_heldout = self.spikes_heldout.to(torch.device('cuda:0'))
+                self.spikes_all_fp = self.spikes_all_fp.to(torch.device('cuda:0'))
 
             # test mode
             elif mode == 'test':
@@ -252,6 +270,7 @@ class Dataset(data.Dataset):
             batch_size=self.config['train']['batch_size'],
             generator=generator,
             # pin_memory=True,
+            # num_workers=1,
             shuffle=shuffle)
 
 def verify_dataset(config):
@@ -366,6 +385,9 @@ def unpack(path, dataset, progress_bar):
     dataset_obj = NWBDataset(path) # NWB Object
     progress_bar.update(10)
     dataset_obj.resample(5) # bin width of 5 ms
+    # pair_corr, chan_names_to_drop = dataset_obj.get_pair_xcorr('spikes',
+    #                                                    threshold=0.01,
+    #                                                    zero_chans=True)
     progress_bar.update(10)
     # ! Training and validation set dictionaries
     train_dict = make_train_input_tensors(
@@ -373,6 +395,8 @@ def unpack(path, dataset, progress_bar):
         trial_split='train', save_file=False,
         include_forward_pred=True
     )
+    # dataset_obj = NWBDataset(path) # NWB Object
+    # dataset_obj.resample(5) # bin width of 5 ms
     progress_bar.update(10)
     val_dict = make_eval_input_tensors(
         dataset_obj, dataset_name=dataset,

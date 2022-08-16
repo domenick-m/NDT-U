@@ -207,7 +207,7 @@ class Transformer(Module):
         self.name = name
 
         self.n_heldin = dataset.n_heldin
-        self.n_neurons = dataset.n_neurons
+        self.n_neurons = dataset.n_neurons if config['model']['emb_size'] == 0 else config['model']['emb_size']
         self.tr_length = dataset.tr_length
         self.full_length = dataset.full_length
 
@@ -223,7 +223,10 @@ class Transformer(Module):
 
         encoder_layer = EncoderLayer(config, self.n_neurons, self.full_length)
         self.encoder = Encoder(config, self.n_neurons, encoder_layer, self.full_length)
-        self.decoder = nn.Linear(self.n_neurons, self.n_neurons)
+        self.decoder = nn.Linear(self.n_neurons, dataset.n_neurons)
+
+        if config['model']['emb_size'] != 0:
+            self.pre_encoder = nn.Linear(dataset.n_neurons, config['model']['emb_size'])
 
         self.attn_mask = None
         self.loss_prob_mask = None
@@ -236,10 +239,11 @@ class Transformer(Module):
         self.decoder.weight.data.uniform_(
             -config['model']['initrange'], config['model']['initrange'])
 
-        std = (2 / (5 * (self.n_neurons))) ** 0.5
-        for parameter in self.parameters():
-            if parameter.dim() > 1:
-                nn.init.normal_(parameter, mean=0.0, std=std)
+        if config['train']['normal_init']:
+            std = (2 / (5 * (self.n_neurons))) ** 0.5
+            for parameter in self.parameters():
+                if parameter.dim() > 1:
+                    nn.init.normal_(parameter, mean=0.0, std=std)
 
     def forward(self, spikes, labels=None):
         ''' Forward pass.
@@ -252,6 +256,8 @@ class Transformer(Module):
             pred_rates (Tensor): The predicted rates. Size=[B, T, N]
         '''
         spikes = spikes.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
+        if self.config['model']['emb_size'] != 0:
+            spikes = self.pre_encoder(spikes)
         spikes += self.pos_embedding(self.pe)
         spikes = self.embedding_dropout(spikes)
         attn_mask = self.get_attn_mask(spikes) # [T, T]
@@ -260,8 +266,9 @@ class Transformer(Module):
         pred_rates = self.decoder(output).permute(1, 0, 2)  # [T x B x N] ->  [B x T x N]
         if labels == None: return pred_rates
         loss = self.classifier(pred_rates, labels)
-        masked_loss = loss[labels != -100]
-        final_loss = masked_loss.mean()
+        # masked_loss = loss[labels != -100]
+        # final_loss = masked_loss.mean()
+        final_loss = loss.mean()
         return final_loss.unsqueeze(0), pred_rates
 
     def get_attn_mask(self, src):
@@ -303,42 +310,47 @@ class Transformer(Module):
         labels = batch.clone()
         config = self.config
 
-        # Expand if expand probability is greater than the number generated.
-        should_expand = config['train']['mask_max_span'] > 1 and expand_p > 0.0 and torch.rand(1).item() < expand_p
-        width =  torch.randint(1, config['train']['mask_max_span'] + 1, (1, )).item() if should_expand else 1
-        loss_ratio = config['model']['loss_ratio'] if width == 1 else config['model']['loss_ratio'] / width
+        # # Expand if expand probability is greater than the number generated.
+        # should_expand = config['train']['mask_max_span'] > 1 and expand_p > 0.0 and torch.rand(1).item() < expand_p
+        # width =  torch.randint(1, config['train']['mask_max_span'] + 1, (1, )).item() if should_expand else 1
+        # loss_ratio = config['model']['loss_ratio'] if width == 1 else config['model']['loss_ratio'] / width
 
-        # Which indicies shold the loss be computed with
-        if self.loss_prob_mask is None or self.loss_prob_mask.size() != labels.size():
-            timestep_shape = labels[:, :, 0].shape # N x T
-            self.loss_prob_mask = torch.full(timestep_shape, loss_ratio, device=batch.device, dtype=torch.float32)
-        loss_mask = torch.bernoulli(self.loss_prob_mask)
+        # # Which indicies shold the loss be computed with
+        # if self.loss_prob_mask is None or self.loss_prob_mask.size() != labels.size():
+        #     timestep_shape = labels[:, :, 0].shape # N x T
+        #     self.loss_prob_mask = torch.full(timestep_shape, loss_ratio, device=batch.device, dtype=torch.float32)
+        # loss_mask = torch.bernoulli(self.loss_prob_mask)
 
-        # Expand
-        if width > 1:
-            kernel = torch.ones(width, device=loss_mask.device).view(1, 1, -1)
-            expanded_mask = F.conv1d(loss_mask.unsqueeze(1), kernel, padding= width// 2).clamp_(0, 1)
-            if width % 2 == 0:
-                expanded_mask = expanded_mask[...,:-1] # crop if even (we've added too much padding)
-            loss_mask = expanded_mask.squeeze(1)
+        # # Expand
+        # if width > 1:
+        #     kernel = torch.ones(width, device=loss_mask.device).view(1, 1, -1)
+        #     expanded_mask = F.conv1d(loss_mask.unsqueeze(1), kernel, padding= width// 2).clamp_(0, 1)
+        #     if width % 2 == 0:
+        #         expanded_mask = expanded_mask[...,:-1] # crop if even (we've added too much padding)
+        #     loss_mask = expanded_mask.squeeze(1)
 
-        loss_mask = loss_mask.bool().unsqueeze(2).expand_as(labels)
-        labels[~loss_mask] = -100
+        # loss_mask = loss_mask.bool().unsqueeze(2).expand_as(labels)
+        # labels[~loss_mask] = -100
 
         # Zero mask
         if self.zero_prob_mask is None or self.zero_prob_mask.size() != labels.size():
             zero_mask_ratio = config['model']['mask_ratio']
             self.zero_prob_mask = torch.full(labels.shape, zero_mask_ratio, device=batch.device, dtype=torch.float32)
-        indices_zero_masked = torch.bernoulli(self.zero_prob_mask).bool() & loss_mask
+        indices_zero_masked = torch.bernoulli(self.zero_prob_mask).bool()
+        # indices_zero_masked = torch.bernoulli(self.zero_prob_mask).bool() & loss_mask
         batch[indices_zero_masked] = 0
 
         # Randomize
         if self.random_prob_mask is None or self.random_prob_mask.size() != labels.size():
             randomize_ratio = config['model']['random_ratio']
             self.random_prob_mask = torch.full(labels.shape, randomize_ratio, device=batch.device, dtype=torch.float32)
-        indices_randomized = torch.bernoulli(self.random_prob_mask).bool() & loss_mask & ~indices_zero_masked
-        random_spikes = torch.randint(batch.max().long(), labels.shape, dtype=torch.long, device=batch.device)
-        batch[indices_randomized] = random_spikes.float()[indices_randomized]
+        indices_randomized = torch.bernoulli(self.random_prob_mask).bool() & ~indices_zero_masked
+        # indices_randomized = torch.bernoulli(self.random_prob_mask).bool() & loss_mask & ~indices_zero_masked
+        if not config['train']['add_one_random']:
+            random_spikes = torch.randint(batch.max().long(), labels.shape, dtype=torch.long, device=batch.device)
+            batch[indices_randomized] = random_spikes.float()[indices_randomized]
+        else:
+            batch[indices_randomized] += 1.0
 
         # Add fake heldout and forward
         batch = torch.cat([batch, torch.zeros_like(heldout_spikes)], -1)

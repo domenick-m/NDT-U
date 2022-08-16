@@ -52,6 +52,9 @@ config.train.optimizer = 'AdamW' # ['AdamW',] The optimizer to use, other may be
 config.train.scheduler = 'Cosine' # ['None', 'Cosine',] The scheduler to use on the learning rate, other may be added in setup.py
 config.train.warmup_steps = 1500 # Warmup steps used by Cosine scheduler, icreases lr to 1 in this many steps before it follows cosine decay
 
+config.train.normal_init = True # The maximum value a gradient can have before it is clipped, avoids exploding gradient
+config.train.add_one_random = True # The maximum value a gradient can have before it is clipped, avoids exploding gradient
+
 config.train.max_grad_norm = 200.0 # The maximum value a gradient can have before it is clipped, avoids exploding gradient
 config.train.weight_decay = 1.000e-7 # The weight decay value used by AdamW, kind of like L2 Reg but better
 
@@ -100,7 +103,7 @@ config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.log_freq = 250 # Epochs between each gradient log of the model by wandb
 config.wandb.log_local = False # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt
 
-config.wandb.project = 'ar-rtt-test' # The wandb project the run should be stored in
+config.wandb.project = 'wild_sweep' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 
 config.wandb.silent = 'true' # ['true', 'false'] If 'true' wandb does not print anything
@@ -130,30 +133,35 @@ config.wandb.alt_wandb_dirs = [ # If the host name is in the list, then store wa
 config.wandb.sweep = CN()
 config.wandb.sweep.setup = CN()
 config.wandb.sweep.train = CN()
-config.wandb.sweep.train.epochs = [5000, 10000, 20000]
-config.wandb.sweep.train.batch_size = [64, 128, 256]
-config.wandb.sweep.train.warmup_steps = [50, 500, 1000, 1500, 1750, 2000, 3000, 4000, 5000]
+# config.wandb.sweep.train.epochs = [5000, 10000, 20000]
+config.wandb.sweep.train.normal_init = [True, False]
+# config.wandb.sweep.train.batch_size = [64, 128, 256]
+config.wandb.sweep.train.warmup_steps = [1, 50, 100, 250, 500, 1000, 2000, 5000]
 config.wandb.sweep.train.init_lr = [0.01, 0.001, 0.005, 0.0005, 0.0005, 0.00005, 0.000005]
-config.wandb.sweep.train.weight_decay = [0.00001, 0.00005, 0.000001, 0.000005,  0.0000001, 0.00000001]
-config.wandb.sweep.train.mask_max_span = [1, 2, 3, 4, 5, 6, 7]
-config.wandb.sweep.train.ramp_start = [100, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000]
-config.wandb.sweep.train.ramp_end = [8000, 9000, 10000, 11000, 15000, 17000, 18000, 20000]
+config.wandb.sweep.train.weight_decay = [0.01, 0.001, 0.0001, 0.00001, 0.00005, 0.000001, 0.000005,  0.0000001, 0.00000001]
+# config.wandb.sweep.train.mask_max_span = [1, 2, 3, 4, 5, 6, 7]
+# config.wandb.sweep.train.ramp_start = [100, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000]
+# config.wandb.sweep.train.ramp_end = [8000, 9000, 10000, 11000, 15000, 17000, 18000, 20000]
+config.wandb.sweep.train.mask_ratio = [0.3, 0.4, 0.5, 0.6, 0.7]
+config.wandb.sweep.train.random_ratio = [0.05, 0.1, 0.2, 0.3, 0.4]
+config.wandb.sweep.train.add_one_random = [True, False]
 
 config.wandb.sweep.model = CN()
-config.wandb.sweep.model.n_heads = [1, 2, 5]
+config.wandb.sweep.model.n_heads = [1, 2, 4, 8]
 config.wandb.sweep.model.undivided_attn = [True, False]
-config.wandb.sweep.model.norm = ['layer', 'scale']
-config.wandb.sweep.model.initrange = [0.1, 0.01, 0.005, 0.001]
+# config.wandb.sweep.model.norm = ['layer', 'scale']
+config.wandb.sweep.model.initrange = [0.1, 0.01, 0.005, 0.001, 0.0001]
 # config.wandb.sweep.model.decoder_layer_size = [32, 64, 128, 256, 512, 1024]
-config.wandb.sweep.model.context_forward = [12, 25, 35, 45, 75]
-config.wandb.sweep.model.context_backward = [12, 25, 35, 45, 75]
-config.wandb.sweep.model.activation = ['relu', 'gelu']
-config.wandb.sweep.model.n_layers = [2, 3, 4, 5, 6, 7]
+config.wandb.sweep.model.context_forward = [1, 3, 5, 7, 12, 25, 35, 45, 60]
+config.wandb.sweep.model.context_backward = [1, 3, 5, 7, 12, 25, 35, 45, 60]
+# config.wandb.sweep.model.activation = ['relu', 'gelu']
+config.wandb.sweep.model.n_layers = [1, 2, 3, 4, 5, 6, 7]
+config.wandb.sweep.model.emb_size = [0, 32, 64, 128, 256]
 config.wandb.sweep.model.dropout_attention = [0.1, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
 config.wandb.sweep.model.dropout_embedding = [0.1, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
 config.wandb.sweep.model.dropout_rates = [0.1, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
 config.wandb.sweep.model.dropout = [0.1, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
-config.wandb.sweep.model.hidden_size = [64, 128, 256]
+config.wandb.sweep.model.hidden_size = [32, 64, 128, 256]
 config.wandb.sweep.model.xavier = [True, False]
 '''
 ────────────────────────────────────────────────────────────────────────────────

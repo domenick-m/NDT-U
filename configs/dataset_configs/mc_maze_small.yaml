@@ -44,5 +44,5 @@ train:
   sweep_type: random
   val_interval: 10
   val_type: original
-  warmup_steps: 100
+  warmup_steps: 1000
   weight_decay: 5.0e-05

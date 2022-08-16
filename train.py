@@ -13,6 +13,7 @@ import numpy as np
 import torch.nn as nn
 from nlb_tools.evaluation import bits_per_spike
 #────#
+from plot import plot
 from transformer import Transformer
 from datasets import verify_dataset, get_dataloaders
 from setup import (set_seeds,
@@ -196,6 +197,8 @@ def train(model, train_dataloader, val_dataloader, device):
     if config['wandb']['log']:
         wandb.watch(model, log_freq=config['wandb']['log_freq'])
 
+    scaler = torch.cuda.amp.GradScaler()
+
     # If the model needs to log then create a folder for it.
     log_local = config['wandb']['log_local'] and not config['wandb']['log']
 
@@ -222,9 +225,6 @@ def train(model, train_dataloader, val_dataloader, device):
             1)
         # Each step is one batch
         for step, (spikes, heldout_spikes, forward_spikes) in enumerate(train_dataloader):
-            spikes = spikes.to(device)
-            heldout_spikes = heldout_spikes.to(device)
-            forward_spikes = forward_spikes.to(device)
 
             # preprocess_batch zero masks, randomizes, and sets the labels for masked and unmaksed
             masked_spikes, labels = model.preprocess_batch(
@@ -234,19 +234,22 @@ def train(model, train_dataloader, val_dataloader, device):
                 forward_spikes, # B, T, N
             )
             # Dont need rates only loss
-            masked_loss, _ = model(masked_spikes, labels)
-            loss = masked_loss.mean()
+            with torch.cuda.amp.autocast():
+                masked_loss, _ = model(masked_spikes, labels)
+                loss = masked_loss.mean()
 
             if config['wandb']['log']:
                 wandb.log({"train loss": loss})
-
-            loss.backward()
+                
+            scaler.scale(loss).backward()
 
             nn.utils.clip_grad_norm_(
                 model.parameters(),
                 config['train']['max_grad_norm'])
 
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
+
             optimizer.zero_grad(set_to_none=True)
 
             if scheduler != None:
@@ -263,16 +266,15 @@ def train(model, train_dataloader, val_dataloader, device):
             all_loss, heldout_loss, forward_loss, heldin_loss = [], [], [], []
             eval_rates, eval_ho_spikes, eval_fw_spikes = [], [], []
             eval_lt_rates, eval_ho_lt_spikes = [], []
+            eval_spikes = []
 
             results_dict = {}
 
             for step, (spikes, heldout_spikes, forward_spikes) in enumerate(val_dataloader):
                 with torch.no_grad():
-                    spikes = spikes.to(device) # B, T, N
-                    heldout_spikes = heldout_spikes.to(device) # B, T, N
-                    forward_spikes = forward_spikes.to(device) # B, T, N
                     labels = spikes.clone()
                     labels = torch.cat([labels, heldout_spikes], -1)
+                    eval_spikes.append(torch.cat([spikes, heldout_spikes], -1))
                     spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes, device=device)], -1)
                     if not config['train']['seq_len'] > 0:
                         labels = torch.cat([labels, forward_spikes], 1)
@@ -306,6 +308,8 @@ def train(model, train_dataloader, val_dataloader, device):
                     heldin_loss.append(hi_loss)
 
             eval_rates = torch.cat(eval_rates, dim=0).exp() # turn into tensor and use exponential on rates
+            eval_spikes = torch.cat(eval_spikes, dim=0) 
+
             eval_ho_spikes = torch.cat(eval_ho_spikes, dim=0).cpu().numpy() # turn into tensor
             if not config['train']['seq_len'] > 0:
                 eval_fw_spikes = torch.cat(eval_fw_spikes, dim=0).cpu().numpy() # turn into tensor
@@ -327,7 +331,6 @@ def train(model, train_dataloader, val_dataloader, device):
             eval_rates_heldout = torch.split(eval_rates, hldt_splt, -1)[1].cpu().numpy()
             eval_rates_lt_heldout = torch.unsqueeze(torch.split(eval_lt_rates, hldt_splt, -1)[1], dim=0).cpu().numpy()
 
-
             co_bps = float(bits_per_spike(eval_rates_heldout, eval_ho_spikes))
             lt_co_bps = float(bits_per_spike(eval_rates_lt_heldout, eval_ho_lt_spikes))
             fp_bps = float(bits_per_spike(eval_rates_forward, eval_fw_spikes)) if not config['train']['seq_len'] > 0 else 0.0
@@ -340,6 +343,8 @@ def train(model, train_dataloader, val_dataloader, device):
             ):
                 torch.save(model, save_path+'best_co_bps.pt')
                 max_co_bps = co_bps
+                torch.save(eval_rates, save_path+'eval_rates.pt')
+                torch.save(eval_spikes, save_path+'eval_spikes.pt')
             
             if (config['setup']['save_model'] and
                 lt_co_bps > config['setup']['save_min_bps'] and
@@ -347,7 +352,8 @@ def train(model, train_dataloader, val_dataloader, device):
             ):
                 torch.save(model, save_path+'best_lt_co_bps.pt')
                 max_lt_co_bps = lt_co_bps
-                plot_rates(eval_lt_rates)
+                torch.save(eval_rates, save_path+'lt_eval_rates.pt')
+                torch.save(eval_spikes, save_path+'lt_eval_spikes.pt')
 
             results_dict = {
                 'epoch': str(epoch),
@@ -378,6 +384,25 @@ def train(model, train_dataloader, val_dataloader, device):
     progress_bar.display('', pos=2)
     progress_bar.close()
     print('\nTraining Complete.\n')
+
+    rates = torch.load(save_path+'eval_rates.pt')
+    spikes = torch.load(save_path+'eval_spikes.pt')
+
+    if config['train']['seq_len'] > 0:
+        rates = rates.reshape((
+            val_dataloader.dataset.spikes_pre_chop.shape[0],
+            rates.shape[0] // val_dataloader.dataset.spikes_pre_chop.shape[0],
+            rates.shape[1],
+            rates.shape[2]
+        ))
+        spikes = spikes.reshape((
+            val_dataloader.dataset.spikes_pre_chop.shape[0],
+            spikes.shape[0] // val_dataloader.dataset.spikes_pre_chop.shape[0],
+            spikes.shape[1],
+            spikes.shape[2]
+        ))
+    plot(config['train']['seq_len'] > 0, rates, spikes, save_path)
+
     # Save the last.pt model
     if config['setup']['save_model']:
         torch.save(model, save_path+'last.pt')

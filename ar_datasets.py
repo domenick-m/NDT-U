@@ -152,7 +152,7 @@ class Dataset(data.Dataset):
                 '''
                 self.n_samples = self.spikes_heldin.shape[0]
                 self.tr_length = self.spikes_heldin.shape[1]
-                # self.fp_length = self.spikes_all_fp.shape[1]
+                self.fp_length = self.spikes_all_fp.shape[1]
                 self.full_length = self.tr_length
                 self.n_heldin = self.spikes_heldin.shape[2]
                 self.n_heldout = self.spikes_heldout.shape[2]
@@ -263,8 +263,8 @@ class Dataset(data.Dataset):
         '''
         return (
             self.spikes_heldin[index],
-            self.spikes_heldout[index] 
-            # self.spikes_all_fp[index]
+            self.spikes_heldout[index] ,
+            self.spikes_all_fp[index]
         )
 
     def clip_val(self, max):

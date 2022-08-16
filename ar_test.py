@@ -8,7 +8,7 @@ from nlb_tools.make_tensors import save_to_h5
 #────#
 from tqdm import tqdm
 import numpy as np
-from datasets import get_dataloaders
+from ar_datasets import get_dataloaders
 from configs.default_config import get_config_from_file
 from setup import set_device, set_seeds, setup_runs_folder
 from ar_datasets import chop
@@ -103,7 +103,7 @@ def main():
             spikes = torch.cat([spikes, ho_spikes], -1)
             # spikes = torch.cat([torch.cat([spikes, ho_spikes], -1), fp_spikes], 1)
             for idx, i in enumerate(spikes):
-                test = chop_and_infer(model, i.cpu().numpy(), config['train']['chop_size'])
+                test = chop_and_infer(model, i.cpu().numpy(), config['train']['seq_len'])
                 test = torch.cat([torch.unsqueeze(torch.Tensor(test), dim=0), torch.zeros((1, 40, 130))], 1)
                 train_rates.append(test)
                 # else:
@@ -130,7 +130,7 @@ def main():
             fp_spikes = torch.zeros_like(forward_spikes, device=device)
             spikes = torch.cat([spikes, ho_spikes], -1)
             for i in spikes:
-                test = chop_and_infer(model, i.cpu().numpy(), config['train']['chop_size'])
+                test = chop_and_infer(model, i.cpu().numpy(), config['train']['seq_len'])
                 test = torch.cat([torch.unsqueeze(torch.Tensor(test), dim=0), torch.zeros((1, 40, 130))], 1)
                 eval_rates.append(test)
                 # test = chop_and_infer(model, i.cpu().numpy(), config['train']['chop_size'])
