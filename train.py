@@ -357,8 +357,8 @@ def train(model, train_dataloader, val_dataloader, device):
             ):
                 torch.save(model, save_path+'best_co_bps.pt')
                 max_co_bps = co_bps
-                torch.save(eval_rates, save_path+'eval_rates.pt')
-                torch.save(eval_spikes, save_path+'eval_spikes.pt')
+                # torch.save(eval_rates, save_path+'eval_rates.pt')
+                # torch.save(eval_spikes, save_path+'eval_spikes.pt')
             
             if (config['setup']['save_model'] and
                 lt_co_bps > config['setup']['save_min_bps'] and
@@ -366,8 +366,8 @@ def train(model, train_dataloader, val_dataloader, device):
             ):
                 torch.save(model, save_path+'best_lt_co_bps.pt')
                 max_lt_co_bps = lt_co_bps
-                torch.save(eval_rates, save_path+'lt_eval_rates.pt')
-                torch.save(eval_spikes, save_path+'lt_eval_spikes.pt')
+                # torch.save(eval_rates, save_path+'lt_eval_rates.pt')
+                # torch.save(eval_spikes, save_path+'lt_eval_spikes.pt')
 
             results_dict = {
                 'epoch': str(epoch),
