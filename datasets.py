@@ -119,20 +119,28 @@ def get_dataloaders(config, mode):
         return trainval_dataloader, None
 
     elif mode == 'test':
-        trainval_data = Dataset(config, data_path, 'trainval')
+        # trainval_data = Dataset(config, data_path, 'trainval')
         test_data = Dataset(config, data_path, 'test')
 
-        trainval_dataloader = trainval_data.get_dataloader(generator, shuffle=False)
+        # trainval_dataloader = trainval_data.get_dataloader(generator, shuffle=False)
         test_dataloader = test_data.get_dataloader(generator, shuffle=False)
-        return trainval_dataloader, test_dataloader
+        return test_dataloader
+        # return trainval_dataloader, test_dataloader
 
 def chop_data(config, data):
     chopped_data = []
     # data = np.concatenate(data, axis=0)
     for trial in data:
-        # print(trial.shape)
-        shape = (int((trial.shape[0] - (config['train']['seq_len'] - 1))), config['train']['seq_len'], trial.shape[-1])
-        strides = (trial.strides[0], trial.strides[0], trial.strides[1])
+        shape = (
+            int((trial.shape[0] - config['train']['overlap']) / (config['train']['seq_len'] - config['train']['overlap'])),
+            config['train']['seq_len'],
+            trial.shape[-1],
+        )
+        strides = (
+            trial.strides[0] * (config['train']['seq_len'] - config['train']['overlap']),
+            trial.strides[0],
+            trial.strides[1],
+        )
         chopped_trial = np.lib.stride_tricks.as_strided(trial, shape=shape, strides=strides).copy().astype('f')
         chopped_data.append(chopped_trial)
     # shape = (int((data.shape[0] - (config['train']['seq_len'] - 1))), config['train']['seq_len'], data.shape[-1])
@@ -171,7 +179,8 @@ class Dataset(data.Dataset):
                 self.n_samples = self.spikes_heldin.shape[0]
                 self.tr_length = self.spikes_heldin.shape[1]
                 self.fp_length = self.spikes_all_fp.shape[1]
-                self.full_length = self.tr_length if self.chop else self.tr_length + self.fp_length
+                self.full_length = self.tr_length
+                # self.full_length = self.tr_length if self.chop else self.tr_length + self.fp_length
                 self.n_heldin = self.spikes_heldin.shape[2]
                 self.n_heldout = self.spikes_heldout.shape[2]
                 self.n_neurons = self.n_heldin + self.n_heldout
@@ -224,12 +233,13 @@ class Dataset(data.Dataset):
             # test mode
             elif mode == 'test':
                 heldin = h5dict['test_spikes_heldin']
+                heldout = h5dict['test_spikes_heldout']
                 samples = h5dict['test_spikes_heldin'].shape[0]
-                heldout = np.zeros((
-                    samples,
-                    h5dict['train_spikes_heldout'].shape[1],
-                    h5dict['train_spikes_heldout'].shape[2]
-                ))
+                # heldout = np.zeros((
+                #     samples,
+                #     h5dict['train_spikes_heldout'].shape[1],
+                #     h5dict['train_spikes_heldout'].shape[2]
+                # ))
                 forward = np.zeros((
                     samples,
                     h5dict['train_spikes_all_fp'].shape[1],
@@ -239,6 +249,10 @@ class Dataset(data.Dataset):
                 self.spikes_heldout = torch.tensor(heldout.astype(np.float32))
                 self.spikes_all_fp = torch.tensor(forward.astype(np.float32))
                 set_sizes(self)
+
+                self.spikes_heldin = self.spikes_heldin.to(torch.device('cuda:0'))
+                self.spikes_heldout = self.spikes_heldout.to(torch.device('cuda:0'))
+                self.spikes_all_fp = self.spikes_all_fp.to(torch.device('cuda:0'))
 
     def __len__(self):
         '''

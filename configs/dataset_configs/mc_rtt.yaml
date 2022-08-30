@@ -32,7 +32,7 @@ train:
   batch_size: 1024
   seq_len: 60
   early_stopping: true
-  epochs: 1000
+  epochs: 2500
   es_chk_pnt: 0.5
   es_min_bps: 0.1
   init_lr: 0.0005

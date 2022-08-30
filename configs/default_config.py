@@ -12,7 +12,7 @@ from yacs.config import CfgNode as CN
 '''
 config = CN()
 config.setup = CN()
-config.setup.dataset = 'mc_rtt' # ['area2_bump', 'dmfc_rsg', 'mc_maze', 'mc_maze_small', 'mc_maze_medium', 'mc_maze_large', 'mc_rtt']
+config.setup.dataset = 'mc_rtt_cont_24' # ['area2_bump', 'dmfc_rsg', 'mc_maze', 'mc_maze_small', 'mc_maze_medium', 'mc_maze_large', 'mc_rtt']
 config.setup.seed = 100 # Seed for initializing model, randomization of dataloader, etc..
 config.setup.subset_seed = 404 # Seed for taking a random validation subset
 
@@ -32,8 +32,9 @@ config.setup.runs_dir = 'runs/' # Where the train and test output data should be
 config.train = CN()
 
 
-config.train.batch_size = 64 # Number of samples to compute loss with
+config.train.batch_size = 512 # Number of samples to compute loss with
 config.train.seq_len = 60 # 0 is full trial, above 0 is sliding window (trials are chopped to that value)
+config.train.overlap = 45 # 0 is full trial, above 0 is sliding window (trials are chopped to that value)
 config.train.epochs = 20000 # Number of full passes through dataset
 
 config.train.val_interval = 10 # Epochs between running on the validation set
@@ -53,7 +54,7 @@ config.train.scheduler = 'Cosine' # ['None', 'Cosine',] The scheduler to use on 
 config.train.warmup_steps = 1500 # Warmup steps used by Cosine scheduler, icreases lr to 1 in this many steps before it follows cosine decay
 
 config.train.normal_init = True # The maximum value a gradient can have before it is clipped, avoids exploding gradient
-config.train.add_one_random = True # The maximum value a gradient can have before it is clipped, avoids exploding gradient
+config.train.add_one_random = False # The maximum value a gradient can have before it is clipped, avoids exploding gradient
 
 config.train.max_grad_norm = 200.0 # The maximum value a gradient can have before it is clipped, avoids exploding gradient
 config.train.weight_decay = 1.000e-7 # The weight decay value used by AdamW, kind of like L2 Reg but better
@@ -67,32 +68,32 @@ config.train.ramp_end = 10000 # Epoch when the number of timesteps being maksed 
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.model = CN()
-config.model.n_heads = 4 # The number of heads used in UndividedMultiheadAttention
-config.model.n_layers = 6 # The number of EncoderLayers the Encoder should have
-config.model.hidden_size = 256 # The size of the linear layers in each EncoderLayer
+config.model.n_heads = 2 # The number of heads used in UndividedMultiheadAttention
+config.model.n_layers = 4 # The number of EncoderLayers the Encoder should have
+config.model.hidden_size = 128 # The size of the linear layers in each EncoderLayer
 
-config.model.emb_size = 64 
+config.model.emb_size = 0
 
 config.model.dropout = 0.4 # Overall dropout, used in EncoderLayer
 config.model.dropout_rates = 0.5 # Dropout of model output (rates)
-config.model.dropout_embedding = 0.7 # Dropout applied after pos_embedding is added
-config.model.dropout_attention = 0.5 # Dropout applied to the attention matrix in UndividedMultiheadAttention
+config.model.dropout_embedding = 0.5 # Dropout applied after pos_embedding is added
+config.model.dropout_attention = 0.7 # Dropout applied to the attention matrix in UndividedMultiheadAttention
 
-config.model.loss_ratio = 1.0 # Percentage of tokens that loss is computed with
-config.model.mask_ratio = 0.2 # Percentage of tokens being used to compute the loss are zero masked
-config.model.random_ratio = 0.5 # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
+config.model.loss_ratio = 0.2 # Percentage of tokens that loss is computed with
+config.model.mask_ratio = 0.75 # Percentage of tokens being used to compute the loss are zero masked
+config.model.random_ratio = 1.0 # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
 
 config.model.undivided_attn = False # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
 
-config.model.norm = "scale" # ['layer', 'scale'] The normalization to be used in the EncoderLayers
+config.model.norm = "layer" # ['layer', 'scale'] The normalization to be used in the EncoderLayers
 config.model.activation = "relu" # ['relu', 'gelu']
 config.model.max_spike_count = 20 # Max number of spikes allowed, any count above is clipped to this
 
 config.model.xavier = False # Whether or not xaiver init should be used, if False use the init from T-fixup
 config.model.initrange = 0.01 # The range that should be used on the normal init of the decoder
 
-config.model.context_forward = 35 # How many timesteps in the future can a timestep attend to
-config.model.context_backward = 35 # How many timesteps in the past can a timestep attend to
+config.model.context_forward = 3 # How many timesteps in the future can a timestep attend to
+config.model.context_backward = 7 # How many timesteps in the past can a timestep attend to
 '''
    ╔════════════════════════════════════════════════════════════════════════╗
    ║                                 WANDB                                  ║
@@ -103,7 +104,7 @@ config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.log_freq = 250 # Epochs between each gradient log of the model by wandb
 config.wandb.log_local = False # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt
 
-config.wandb.project = 'wild_sweep' # The wandb project the run should be stored in
+config.wandb.project = 'mc_rtt_cont' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 
 config.wandb.silent = 'true' # ['true', 'false'] If 'true' wandb does not print anything
@@ -116,8 +117,6 @@ config.wandb.alt_wandb_dirs = [ # If the host name is in the list, then store wa
 '''
 # The hyperparameters to search through if config.train.sweep_enabled is True or the --sweep CLI arg is used
 # config.wandb.sweep = CN()
-# config.wandb.sweep.setup = CN()
-# # config.wandb.sweep.setup.seed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 # config.wandb.sweep.train = CN()
 # config.wandb.sweep.train.warmup_steps = [100, 500, 1000, 2000]
 # config.wandb.sweep.train.ramp_start = [50, 100, 500, 1000]
@@ -132,21 +131,26 @@ config.wandb.alt_wandb_dirs = [ # If the host name is in the list, then store wa
 
 config.wandb.sweep = CN()
 config.wandb.sweep.setup = CN()
+config.wandb.sweep.setup.seed = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 config.wandb.sweep.train = CN()
 # config.wandb.sweep.train.epochs = [5000, 10000, 20000]
 config.wandb.sweep.train.normal_init = [True, False]
 # config.wandb.sweep.train.batch_size = [64, 128, 256]
-config.wandb.sweep.train.warmup_steps = [1, 50, 100, 250, 500, 1000, 2000, 5000]
+config.wandb.sweep.train.warmup_steps = [1, 50, 100, 250, 500, 1000, 2000, 5000, 10000, 50000, 100000, 1000000]
 config.wandb.sweep.train.init_lr = [0.01, 0.001, 0.005, 0.0005, 0.0005, 0.00005, 0.000005]
 config.wandb.sweep.train.weight_decay = [0.01, 0.001, 0.0001, 0.00001, 0.00005, 0.000001, 0.000005,  0.0000001, 0.00000001]
 # config.wandb.sweep.train.mask_max_span = [1, 2, 3, 4, 5, 6, 7]
 # config.wandb.sweep.train.ramp_start = [100, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000]
 # config.wandb.sweep.train.ramp_end = [8000, 9000, 10000, 11000, 15000, 17000, 18000, 20000]
-config.wandb.sweep.train.mask_ratio = [0.1, 0.2, 0.3, 0.4, 0.5]
-config.wandb.sweep.train.random_ratio = [0.05, 0.1, 0.2]
+config.wandb.sweep.train.ramp_start = [100, 500, 1000, 2000, 3000]
+config.wandb.sweep.train.ramp_end = [3500, 4000, 5000, 7500]
 config.wandb.sweep.train.add_one_random = [True, False]
 
 config.wandb.sweep.model = CN()
+config.wandb.sweep.model.mask_max_span = [2, 3, 5, 7]
+config.wandb.sweep.model.loss_ratio = [0.25, 0.35, 0.45, 0.55]
+config.wandb.sweep.model.mask_ratio = [0.5, 0.75, 0.9]
+config.wandb.sweep.model.random_ratio = [0.5, 0.7, 0.85, 1.0]
 config.wandb.sweep.model.undivided_attn = [True, False]
 # config.wandb.sweep.model.norm = ['layer', 'scale']
 config.wandb.sweep.model.initrange = [0.1, 0.01, 0.005, 0.001, 0.0001]
@@ -154,13 +158,14 @@ config.wandb.sweep.model.initrange = [0.1, 0.01, 0.005, 0.001, 0.0001]
 config.wandb.sweep.model.context_forward = [3, 5, 7, 12, 25, 35, 45, 60]
 config.wandb.sweep.model.context_backward = [3, 5, 7, 12, 25, 35, 45, 60]
 # config.wandb.sweep.model.activation = ['relu', 'gelu']
-config.wandb.sweep.model.n_layers = [1, 2, 3, 4, 5, 6, 7]
-config.wandb.sweep.model.emb_size = [0, 32, 64, 128]
+config.wandb.sweep.model.n_heads = [1, 2, 5]
+config.wandb.sweep.model.n_layers = [1, 2, 3, 4, 5]
+# config.wandb.sweep.model.emb_size = [0, 32, 64, 128]
 config.wandb.sweep.model.dropout_attention = [0.1, 0.3, 0.4, 0.5, 0.6, 0.7]
 config.wandb.sweep.model.dropout_embedding = [0.1, 0.3, 0.4, 0.5, 0.6, 0.7]
 config.wandb.sweep.model.dropout_rates = [0.1, 0.3, 0.4, 0.5, 0.6, 0.7]
 config.wandb.sweep.model.dropout = [0.1, 0.3, 0.4, 0.5, 0.6, 0.7]
-config.wandb.sweep.model.hidden_size = [32, 64, 128, 256]
+config.wandb.sweep.model.hidden_size = [64, 128, 256, 512]
 config.wandb.sweep.model.xavier = [True, False]
 '''
 ────────────────────────────────────────────────────────────────────────────────

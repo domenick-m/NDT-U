@@ -41,7 +41,6 @@ from configs.default_config import (get_config,
 # be found by running 'python train.py -h'.
 
 def main():
-    print('hello')
     # Parse arguments
     arg_dict = parse_args(sys.argv[1:])
     # Overwrite default config with CLI args and dataset_config
@@ -290,9 +289,9 @@ def train(model, train_dataloader, val_dataloader, device):
                     labels = torch.cat([labels, heldout_spikes], -1)
                     eval_spikes.append(torch.cat([spikes, heldout_spikes], -1))
                     spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes, device=device)], -1)
-                    if not config['train']['seq_len'] > 0:
-                        labels = torch.cat([labels, forward_spikes], 1)
-                        spikes = torch.cat([spikes, torch.zeros_like(forward_spikes, device=device)], 1)
+                    # if not config['train']['seq_len'] > 0:
+                    #     labels = torch.cat([labels, forward_spikes], 1)
+                    #     spikes = torch.cat([spikes, torch.zeros_like(forward_spikes, device=device)], 1)
 
                     loss, rates = model(spikes, labels)
                     all_loss.append(loss)
@@ -300,24 +299,24 @@ def train(model, train_dataloader, val_dataloader, device):
                     eval_lt_rates.append(rates[:, -1, :])
                     eval_ho_spikes.append(heldout_spikes)
                     eval_ho_lt_spikes.append(heldout_spikes[:, -1, :])
-                    if not config['train']['seq_len'] > 0:
-                        eval_fw_spikes.append(forward_spikes)
+                    # if not config['train']['seq_len'] > 0:
+                    #     eval_fw_spikes.append(forward_spikes)
 
                     heldout_masked = labels.clone()
                     heldout_masked[:,:,:-heldout_spikes.size(-1)] = -100
                     ho_loss, ho_rates = model(spikes, heldout_masked)
                     heldout_loss.append(ho_loss)
 
-                    if not config['train']['seq_len'] > 0:
-                        forward_masked = labels.clone()
-                        forward_masked[:,:-forward_spikes.size(1),:] = -100
-                        fw_loss, fw_rates = model(spikes, forward_masked)
-                        forward_loss.append(fw_loss)
+                    # if not config['train']['seq_len'] > 0:
+                    #     forward_masked = labels.clone()
+                    #     forward_masked[:,:-forward_spikes.size(1),:] = -100
+                    #     fw_loss, fw_rates = model(spikes, forward_masked)
+                    #     forward_loss.append(fw_loss)
 
                     heldin_masked = labels.clone()
                     heldin_masked[:,:, -heldout_spikes.size(-1):] = -100
-                    if not config['train']['seq_len'] > 0:
-                        heldin_masked[:, -forward_spikes.size(1):,:] = -100
+                    # if not config['train']['seq_len'] > 0:
+                    #     heldin_masked[:, -forward_spikes.size(1):,:] = -100
                     hi_loss = model(spikes, heldin_masked)[0]
                     heldin_loss.append(hi_loss)
 
@@ -325,8 +324,8 @@ def train(model, train_dataloader, val_dataloader, device):
             eval_spikes = torch.cat(eval_spikes, dim=0) 
 
             eval_ho_spikes = torch.cat(eval_ho_spikes, dim=0).cpu().numpy() # turn into tensor
-            if not config['train']['seq_len'] > 0:
-                eval_fw_spikes = torch.cat(eval_fw_spikes, dim=0).cpu().numpy() # turn into tensor
+            # if not config['train']['seq_len'] > 0:
+            #     eval_fw_spikes = torch.cat(eval_fw_spikes, dim=0).cpu().numpy() # turn into tensor
 
             eval_lt_rates = torch.cat(eval_lt_rates, dim=0).exp() # turn into tensor and use exponential on rates
             eval_ho_lt_spikes = torch.unsqueeze(torch.cat(eval_ho_lt_spikes, dim=0), dim=0).cpu().numpy() # turn into tensor
@@ -334,12 +333,12 @@ def train(model, train_dataloader, val_dataloader, device):
             all_loss = torch.cat(all_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
             heldout_loss = torch.cat(heldout_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
             heldin_loss = torch.cat(heldin_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
-            if not config['train']['seq_len'] > 0:
-                forward_loss = torch.cat(forward_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
+            # if not config['train']['seq_len'] > 0:
+            #     forward_loss = torch.cat(forward_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
 
-                frwd_splt = [model.tr_length, model.full_length - model.tr_length]
-                eval_rates, eval_rates_forward = torch.split(eval_rates, frwd_splt, 1)
-                eval_rates_forward = eval_rates_forward.cpu().numpy()
+                # frwd_splt = [model.tr_length, model.full_length - model.tr_length]
+                # eval_rates, eval_rates_forward = torch.split(eval_rates, frwd_splt, 1)
+                # eval_rates_forward = eval_rates_forward.cpu().numpy()
 
             hldt_splt = [model.n_heldin, heldout_spikes.size(-1)]
             eval_rates_heldout = torch.split(eval_rates, hldt_splt, -1)[1].cpu().numpy()
@@ -347,7 +346,8 @@ def train(model, train_dataloader, val_dataloader, device):
 
             co_bps = float(bits_per_spike(eval_rates_heldout, eval_ho_spikes))
             lt_co_bps = float(bits_per_spike(eval_rates_lt_heldout, eval_ho_lt_spikes))
-            fp_bps = float(bits_per_spike(eval_rates_forward, eval_fw_spikes)) if not config['train']['seq_len'] > 0 else 0.0
+            fp_bps = 0.0
+            # fp_bps = float(bits_per_spike(eval_rates_forward, eval_fw_spikes)) if not config['train']['seq_len'] > 0 else 0.0
             val_loss = np.mean(all_loss)
 
             # Save current model if it scores higher than the max_co_bps and is past the save_min_bps
@@ -375,7 +375,8 @@ def train(model, train_dataloader, val_dataloader, device):
                 'heldout_loss': np.mean(heldout_loss),
                 'co_bps': co_bps,
                 'lt_co_bps': lt_co_bps,
-                'forward_loss': np.mean(forward_loss) if not config['train']['seq_len'] > 0 else 0,
+                'forward_loss': 0,
+                # 'forward_loss': np.mean(forward_loss) if not config['train']['seq_len'] > 0 else 0,
                 'fp_bps': fp_bps,
                 'heldin_loss': np.mean(heldin_loss)
             }
@@ -402,20 +403,20 @@ def train(model, train_dataloader, val_dataloader, device):
     rates = torch.load(save_path+'eval_rates.pt')
     spikes = torch.load(save_path+'eval_spikes.pt')
 
-    if config['train']['seq_len'] > 0:
-        rates = rates.reshape((
-            val_dataloader.dataset.spikes_pre_chop.shape[0],
-            rates.shape[0] // val_dataloader.dataset.spikes_pre_chop.shape[0],
-            rates.shape[1],
-            rates.shape[2]
-        ))
-        spikes = spikes.reshape((
-            val_dataloader.dataset.spikes_pre_chop.shape[0],
-            spikes.shape[0] // val_dataloader.dataset.spikes_pre_chop.shape[0],
-            spikes.shape[1],
-            spikes.shape[2]
-        ))
-    plot(config['train']['seq_len'] > 0, rates, spikes, save_path)
+    # if config['train']['seq_len'] > 0:
+    #     rates = rates.reshape((
+    #         val_dataloader.dataset.spikes_pre_chop.shape[0],
+    #         rates.shape[0] // val_dataloader.dataset.spikes_pre_chop.shape[0],
+    #         rates.shape[1],
+    #         rates.shape[2]
+    #     ))
+    #     spikes = spikes.reshape((
+    #         val_dataloader.dataset.spikes_pre_chop.shape[0],
+    #         spikes.shape[0] // val_dataloader.dataset.spikes_pre_chop.shape[0],
+    #         spikes.shape[1],
+    #         spikes.shape[2]
+    #     ))
+    # plot(config['train']['seq_len'] > 0, rates, spikes, save_path)
 
     # Save the last.pt model
     if config['setup']['save_model']:
