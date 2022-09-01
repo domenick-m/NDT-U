@@ -400,8 +400,8 @@ def train(model, train_dataloader, val_dataloader, device):
     progress_bar.close()
     print('\nTraining Complete.\n')
 
-    rates = torch.load(save_path+'eval_rates.pt')
-    spikes = torch.load(save_path+'eval_spikes.pt')
+    # rates = torch.load(save_path+'eval_rates.pt')
+    # spikes = torch.load(save_path+'eval_spikes.pt')
 
     # if config['train']['seq_len'] > 0:
     #     rates = rates.reshape((
@@ -417,16 +417,20 @@ def train(model, train_dataloader, val_dataloader, device):
     #         spikes.shape[2]
     #     ))
     # plot(config['train']['seq_len'] > 0, rates, spikes, save_path)
-
+    print('before model save')
     # Save the last.pt model
     if config['setup']['save_model']:
         torch.save(model, save_path+'last.pt')
         print('Saved best.pt & last.pt to: '+save_path)
+    print('after model save')
 
     # Remove wandb run file when completed
     delete_wandb_run_folder(wandb)
     # Clear GPU in case in a sweep
+    print('after delete wandb')
     torch.cuda.empty_cache()
+    print('after torch clear cache')
+
 
 if __name__ == "__main__":
     try:

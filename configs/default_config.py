@@ -144,10 +144,10 @@ config.wandb.sweep.train.weight_decay = [0.01, 0.001, 0.0001, 0.00001, 0.00005, 
 # config.wandb.sweep.train.ramp_end = [8000, 9000, 10000, 11000, 15000, 17000, 18000, 20000]
 config.wandb.sweep.train.ramp_start = [100, 500, 1000, 2000, 3000]
 config.wandb.sweep.train.ramp_end = [3500, 4000, 5000, 7500]
+config.wandb.sweep.train.mask_max_span = [2, 3, 5, 7]
 # config.wandb.sweep.train.add_one_random = [True, False]
 
 config.wandb.sweep.model = CN()
-config.wandb.sweep.model.mask_max_span = [2, 3, 5, 7]
 config.wandb.sweep.model.loss_ratio = [0.2, 0.25, 0.35, 0.45, 0.55]
 config.wandb.sweep.model.mask_ratio = [0.65, 0.75, 0.85, 0.9]
 # config.wandb.sweep.model.random_ratio = [0.85, 1.0]
