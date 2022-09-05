@@ -1,3 +1,4 @@
+from analysis_upload import upload_analysis
 #!/usr/bin/env python3
 # Author: Domenick Mifsud
 #───────#
@@ -423,7 +424,7 @@ def train(model, train_dataloader, val_dataloader, device):
         torch.save(model, save_path+'last.pt')
         print('Saved best.pt & last.pt to: '+save_path)
     print('after model save')
-
+    upload_analysis(wandb, model, config, device)
     # Remove wandb run file when completed
     delete_wandb_run_folder(wandb)
     # Clear GPU in case in a sweep
