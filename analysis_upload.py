@@ -724,6 +724,8 @@ def upload_analysis(wandb, model, config, device):
     fig.update_layout(layout)
     config = {'displayModeBar': False}
     fig.write_html(f"plots/{name}/true_vs_pred_movement.html", config=config)
+    wandb.log({"pred movement plot": wandb.Html(open(f"plots/{name}/true_vs_pred_movement.html"), inject=False)})
+
 
     print("Done!\n")
 
@@ -805,73 +807,79 @@ def upload_analysis(wandb, model, config, device):
 
 
     '''
-    ╔════════════════════════════════════════════════════════════════════════╗
-    ║                          SMTH SPIKES PCA PLOT                          ║
-    ╚════════════════════════════════════════════════════════════════════════╝
-    '''
-    print('Generating "smth_pca.html"...')
+    # ╔════════════════════════════════════════════════════════════════════════╗
+    # ║                          SMTH SPIKES PCA PLOT                          ║
+    # ╚════════════════════════════════════════════════════════════════════════╝
+    # '''
+    # print('Generating "smth_pca.html"...')
 
-    fig = go.Figure()
+    # fig = go.Figure()
 
-    for tid, trial in trial_data.groupby('trial_id'):
-        angle = dataset.trial_info[dataset.trial_info.trial_id == tid].reach_angle
-        fig.add_trace(
-            go.Scatter3d(
-                x=trial.smth_pca.x, 
-                y=trial.smth_pca.y, 
-                z=trial.smth_pca.z,
-                mode='lines',
-                line=dict(color=f'{colors.rgb2hex(mapper.to_rgba(angle))}')
-            )
-        )
-
-    fig.update_layout(
-        width=300,
-        height=300,
-        autosize=False,
-        showlegend=False,
-        # title="PCA of Smoothed Spikes",
-        scene=dict(
-            xaxis_showspikes=False,
-            yaxis_showspikes=False,
-            zaxis_showspikes=False,
-            xaxis_title="PC1",
-            yaxis_title="PC2",
-            zaxis_title="PC3",
-            camera=dict(
-                center=dict(
-                    x=0.0,
-                    y=0.0,
-                    z=-0.125,
-                ),
-            ),
-            aspectratio = dict( x=1, y=1, z=1 ),
-            aspectmode = 'manual'
-        ),
-    )
-
-    # fig.add_layout_image(
-    #     dict(
-    #         source="https://domenick-m.github.io/NDT-Timing-Test/plots/color_wheel.png",
-    #         xref="paper", yref="paper",
-    #         x=1.085, y=0.01,
-    #         sizex=0.35, sizey=0.35,
-    #         xanchor="right", yanchor="bottom"
+    # for tid, trial in trial_data.groupby('trial_id'):
+    #     angle = dataset.trial_info[dataset.trial_info.trial_id == tid].reach_angle
+    #     fig.add_trace(
+    #         go.Scatter3d(
+    #             x=trial.smth_pca.x, 
+    #             y=trial.smth_pca.y, 
+    #             z=trial.smth_pca.z,
+    #             mode='lines',
+    #             line=dict(color=f'{colors.rgb2hex(mapper.to_rgba(angle))}')
+    #         )
     #     )
+
+    # fig.update_layout(
+    #     width=300,
+    #     height=300,
+    #     autosize=False,
+    #     showlegend=False,
+    #     # title="PCA of Smoothed Spikes",
+    #     scene=dict(
+    #         xaxis_showspikes=False,
+    #         yaxis_showspikes=False,
+    #         zaxis_showspikes=False,
+    #         xaxis_title="PC1",
+    #         yaxis_title="PC2",
+    #         zaxis_title="PC3",
+    #         camera=dict(
+    #             center=dict(
+    #                 x=0.0,
+    #                 y=0.0,
+    #                 z=-0.125,
+    #             ),
+    #         ),
+    #         aspectratio = dict( x=1, y=1, z=1 ),
+    #         aspectmode = 'manual'
+    #     ),
     # )
 
-    fig.update_layout(margin=dict(r=0, l=0, b=10, t=0))
+    # # fig.add_layout_image(
+    # #     dict(
+    # #         source="https://domenick-m.github.io/NDT-Timing-Test/plots/color_wheel.png",
+    # #         xref="paper", yref="paper",
+    # #         x=1.085, y=0.01,
+    # #         sizex=0.35, sizey=0.35,
+    # #         xanchor="right", yanchor="bottom"
+    # #     )
+    # # )
 
-    config = {'displayModeBar': False}
-    fig.write_html(f"plots/{name}/smth_pca.html", config=config)
+    # fig.update_layout(margin=dict(r=0, l=0, b=10, t=0))
 
-    # for line in fileinput.input(f"plots/{name}/smth_pca.html", inplace=True):
-    #     if line == "    <div>                        <script type=\"text/javascript\">window.PlotlyConfig = {MathJaxConfig: 'local'};</script>\n":
-    #         print("    <div align=\"center\">                        <script type=\"text/javascript\">window.PlotlyConfig = {MathJaxConfig: 'local'};</script>\n", end='')
-    #     else:
-    #         print(line, end='')
+    # config = {'displayModeBar': False}
+    # fig.write_html(f"plots/{name}/smth_pca.html", config=config)
 
-    print("Done!\n")
+    # # for line in fileinput.input(f"plots/{name}/smth_pca.html", inplace=True):
+    # #     if line == "    <div>                        <script type=\"text/javascript\">window.PlotlyConfig = {MathJaxConfig: 'local'};</script>\n":
+    # #         print("    <div align=\"center\">                        <script type=\"text/javascript\">window.PlotlyConfig = {MathJaxConfig: 'local'};</script>\n", end='')
+    # #     else:
+    # #         print(line, end='')
+
+    # print("Done!\n")
+
+
+# END
+
+
+
 
     # set_seeds(config)
     # dataset = NWBDataset('/home/dmifsud/Projects/NDT-U/data/mc_rtt_train.nwb', split_heldout=True)

@@ -1,6 +1,7 @@
 /runs
 /wandb/*
 /data
+/plots
 */__pycache__
 __pycache__
 plot.ipynb

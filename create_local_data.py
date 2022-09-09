@@ -205,6 +205,8 @@ def make_test_data(window=30, overlap=24, lag=70, smooth_std=50):
 
         test_hi_smth_spikes = np.apply_along_axis(filt, 0, test_hi_segments[:, -1, :])
         test_ho_smth_spikes = np.apply_along_axis(filt, 0, test_ho_segments[:, -1, :])
+        train_hi_smth_spikes = np.apply_along_axis(filt, 0, train_hi_segments[:, -1, :])
+        train_ho_smth_spikes = np.apply_along_axis(filt, 0, train_ho_segments[:, -1, :])
     
     train_dict = {
         'train_spikes_heldin': train_hi_segments,
@@ -220,7 +222,9 @@ def make_test_data(window=30, overlap=24, lag=70, smooth_std=50):
         'train_vel_segments': train_vel_segments,
         'test_vel_segments': test_vel_segments,
         'test_hi_smth_spikes': test_hi_smth_spikes,
-        'test_ho_smth_spikes': test_ho_smth_spikes
+        'test_ho_smth_spikes': test_ho_smth_spikes,
+        'train_hi_smth_spikes': train_hi_smth_spikes,
+        'train_ho_smth_spikes': train_ho_smth_spikes
     }
 
     h5_file = {**train_dict, **test_dict, **etc_dict}
