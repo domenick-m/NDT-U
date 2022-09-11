@@ -41,6 +41,9 @@ config.train.val_interval = 10 # Epochs between running on the validation set
 config.train.val_type = 'original' # ['original', 'random', 'none'] Original is the nlb given validation set, random is a random subset of the combined train and validation set, none is no validation set
 config.train.val_ratio = 0.05 # Percentage of the combined training and validation set to use as the validation set when using random val_type
 
+config.train.cross_val = True # If True, run with K-Folds cross validation
+config.train.n_folds = 5 # Number of folds (K) to use with K-folds cv
+
 config.train.sweep_enabled = False # Whether or not wandb hyperparameter sweep is enabled, if False running train.py will train a single model
 config.train.sweep_type = 'random' # ['grid', 'random'] Which wandb sweep type to use when sweep is enabled, grid is every combination of the sweep values, and random is random combinations of the sweep values
 config.train.sweep_epochs = 9999 # Number of models that should be trained if sweep_type is random
@@ -104,7 +107,7 @@ config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.log_freq = 250 # Epochs between each gradient log of the model by wandb
 config.wandb.log_local = False # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt
 
-config.wandb.project = 'analysis-sweep' # The wandb project the run should be stored in
+config.wandb.project = 'test' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 
 config.wandb.silent = 'true' # ['true', 'false'] If 'true' wandb does not print anything
@@ -252,7 +255,6 @@ def get_wandb_config(wandb):
     config = dict(wandb.config)
     for k, v in config.copy().items():
         if '.' in k:
-            print(k)
             new_key = k.split('.')[0]
             inner_key = k.split('.')[1]
             if new_key not in config.keys():

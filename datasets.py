@@ -89,6 +89,15 @@ def get_dataloaders(config, mode):
         val_dataloader = val_data.get_dataloader(generator, shuffle=False)
         return train_dataloader, val_dataloader
 
+    if mode == 'cross-val':
+        train_data = Dataset(config, data_path, 'train')
+        val_data = Dataset(config, data_path, 'val')
+
+        val_data.clip_val(train_data.spikes_heldin.max().item() + 3)
+        train_dataloader = train_data.get_dataloader(generator, shuffle=True)
+        val_dataloader = val_data.get_dataloader(generator, shuffle=False)
+        return train_dataloader, val_dataloader
+
     elif mode == 'random':
         trainval_data = Dataset(config, data_path, 'trainval')
 
@@ -119,13 +128,10 @@ def get_dataloaders(config, mode):
         return trainval_dataloader, None
 
     elif mode == 'test':
-        # trainval_data = Dataset(config, data_path, 'trainval')
         test_data = Dataset(config, data_path, 'test')
 
-        # trainval_dataloader = trainval_data.get_dataloader(generator, shuffle=False)
         test_dataloader = test_data.get_dataloader(generator, shuffle=False)
         return test_dataloader
-        # return trainval_dataloader, test_dataloader
 
 def chop_data(config, data):
     chopped_data = []

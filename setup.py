@@ -26,6 +26,16 @@ from configs.default_config import (get_config_types,
 '''──────────────────────────────── setup.py ────────────────────────────────'''
 # This is for misc functions that set up stuff.
 
+def reset_wandb_env():
+    exclude = {
+        "WANDB_PROJECT",
+        "WANDB_ENTITY",
+        "WANDB_API_KEY",
+    }
+    for k, v in os.environ.items():
+        if k.startswith("WANDB_") and k not in exclude:
+            del os.environ[k]
+
 def set_device(config):
     ''' Sets torch device according to config.setup.gpu_idx, -1 will auto-select
     the GPU with the least memory usage.
@@ -313,29 +323,26 @@ def upload_print_results(config, result_dict, progress_bar, save_path):
         progress_bar (tqdm): Progress bar.
         save_path (str): Where to save locally.
     '''
-    epoch = '[Epoch: '+result_dict['epoch']+']'
+    epoch = '[Epoch: '+str(result_dict['epoch'])+']'
     loss = '[val loss: '+"{:.4f}".format(result_dict['val_loss'])+']'
     cobps = '[val co-bps: '+"{:.3f}".format(result_dict['co_bps'])+']'
-    # fpbps = '[val fp-bps: '+"{:.3f}".format(result_dict['fp_bps'])+']'
-    report = epoch + '   ' + loss + '   ' + cobps + '   ' 
-    # report = epoch + '   ' + loss + '   ' + cobps + '   ' + fpbps
+    report = epoch + '   ' + loss + '   ' + cobps + '   '
+    progress_bar.display(msg=report, pos=0)
+
     if config['wandb']['log']:
         wandb.log({
             'val loss': result_dict['val_loss'],
             'val heldout loss': result_dict['heldout_loss'],
             'val co-bps': result_dict['co_bps'],
-            # 'val forward loss': result_dict['forward_loss'],
-            # 'val fp-bps': result_dict['fp_bps'],
             'val lt-co-bps': result_dict['lt_co_bps'],
-            'val heldin loss': result_dict['heldin_loss']
-        })
+            'val heldin loss': result_dict['heldin_loss'],
+        }, step=result_dict['epoch'])
     elif config['wandb']['log_local']:
         with open(save_path+'report_log.txt', 'a') as f:
             f.write('\n'+report)
             f.write(']\n'+' '*13+'[val heldin loss: '+ "{:.3f}".format(result_dict['heldin_loss']))
             f.write(']  [val heldout loss: '+ "{:.3f}".format(result_dict['heldout_loss']))
             f.write(']  [val forward loss: '+ "{:.3f}".format(result_dict['forward_loss'])+']')
-    progress_bar.display(msg=report, pos=0)
 
 def print_train_configs(config, args):
     ''' Prints the configs on train startup.
