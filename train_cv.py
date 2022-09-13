@@ -4,26 +4,26 @@
 from test_eval import test_eval
 
 import os
-import gc
+# import gc
 import sys
-import time
+# import time
 import shutil
 
 from glob import glob
-#────#
+# #────#
 import torch
 import wandb
 import numpy as np
 import torch.nn as nn
 from nlb_tools.evaluation import bits_per_spike
-#────#
-from plot import plot
+# #────#
 from transformer import Transformer
-from datasets import verify_dataset, get_dataloaders
-from setup import (set_seeds,
+from utils import (get_config,
+                   get_config_dict,
+                   set_seeds,
                    parse_args,
                    set_device,
-                   plot_rates,
+#                    plot_rates,
                    get_optimizer,
                    get_scheduler,
                    get_wandb_dir,
@@ -34,15 +34,17 @@ from setup import (set_seeds,
                    upload_print_results,
                    print_run_get_prog_bar,
                    delete_wandb_run_folder)
-from configs.default_config import (get_config,
-                                    get_config_dict,
-                                    get_wandb_config,
-                                    get_config_from_file)
+# from configs.default_config import (get_config,
+# #                                     get_config_dict,
+# #                                     get_wandb_config,
+#                                     get_config_from_file)
 '''──────────────────────────────── train.py ────────────────────────────────'''
 # This file train can train a single NDT-U model, start a hyper parameter sweep,
 # or add an agent to a hyperparameter sweep. It has optional arguments that can
 # be found by running 'python train.py -h'.
 
+from datasets import verify_dataset
+from datasets import get_dataloaders
 
 
 # Will beome 'train.py'
@@ -62,7 +64,7 @@ def main():
     set_device(config)
     device = torch.device('cuda:0')
 
-    os.environ['WANDB_SILENT'] = config['wandb']['silent'] # dont print wandb logs
+    os.environ['WANDB_SILENT'] = 'true' if config['wandb']['silent'] else 'false' # dont print wandb logs
 
     # Add an agent to a wandb sweep
     if '--add' in arg_dict:
@@ -97,11 +99,9 @@ def run_single(config, device, name):
                                on.
         name (str): The model name, used to save model and log model reports.
     '''
-    train_dataloader, val_dataloader = get_dataloaders(config, config['train']['val_type'])
+    train_dataloader, val_dataloader = get_dataloaders(config, 'train_val')
 
-    dataset = train_dataloader.dataset # dataset contains all the variables from the Dataset object
-    if config['train']['val_type'] == 'random':
-        dataset = dataset.dataset # subsets have the object hidden one level further
+    dataset = train_dataloader.dataset.dataset # dataset contains all the variables from the Dataset object
 
     if config['wandb']['log']:
         wandb.init(
@@ -120,8 +120,9 @@ def run_single(config, device, name):
         wandb.run.name = name
 
     model = Transformer(config, dataset, name).to(device)
-    train(model, train_dataloader, val_dataloader, device)
-    test_eval(wandb, model, config, device)
+    # train(model, train_dataloader, val_dataloader, device)
+    test_eval(config, model)
+    # test_eval(config, model, wandb)
 
     delete_wandb_run_folder(wandb)
     # Clear GPU in case in a sweep
@@ -313,6 +314,8 @@ def train(model, train_dataloader, val_dataloader, device):
     progress_bar = print_run_get_prog_bar(config, model, wandb if (
         config['wandb']['log']) else None)
 
+    es_counter = 0
+
     # Each epoch is a single pass through the entire dataset.
     for epoch in range(config['train']['epochs']):
         model.train() # sets the dropout to on
@@ -322,15 +325,15 @@ def train(model, train_dataloader, val_dataloader, device):
             (config['train']['ramp_end'] - config['train']['ramp_start']),
             1)
         # Each step is one batch
-        for step, (spikes, heldout_spikes, forward_spikes) in enumerate(train_dataloader):
+        for step, (spikes, heldout_spikes) in enumerate(train_dataloader):
 
             # preprocess_batch zero masks, randomizes, and sets the labels for masked and unmaksed
             masked_spikes, labels = model.preprocess_batch(
                 spikes, # B, T, N
                 expand_prob,
                 heldout_spikes, # B, T, N
-                forward_spikes, # B, T, N
             )
+
             # Dont need rates only loss
             with torch.cuda.amp.autocast():
                 masked_loss, _ = model(masked_spikes, labels)
@@ -357,31 +360,25 @@ def train(model, train_dataloader, val_dataloader, device):
 
         # Run on the validation set every 'val_interval' epochs
         if (epoch % config['train']['val_interval'] == 0 and
-            config['train']['val_type'] != 'none' and 
             val_dataloader != None
         ):
             model.eval() # turns off dropout
 
-            all_loss, heldout_loss, forward_loss, heldin_loss = [], [], [], []
-            eval_rates, eval_ho_spikes, eval_fw_spikes = [], [], []
-            eval_lt_rates, eval_ho_lt_spikes = [], []
-            eval_spikes = []
+            all_loss, heldout_loss, heldin_loss = [], [], []
+            eval_rates, eval_ho_spikes = [], []
 
             results_dict = {}
 
-            for step, (spikes, heldout_spikes, forward_spikes) in enumerate(val_dataloader):
+            for step, (spikes, heldout_spikes) in enumerate(val_dataloader):
                 with torch.no_grad():
                     labels = spikes.clone()
                     labels = torch.cat([labels, heldout_spikes], -1)
-                    eval_spikes.append(torch.cat([spikes, heldout_spikes], -1))
                     spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes, device=device)], -1)
 
                     loss, rates = model(spikes, labels)
                     all_loss.append(loss)
                     eval_rates.append(rates)
-                    eval_lt_rates.append(rates[:, -1, :])
                     eval_ho_spikes.append(heldout_spikes)
-                    eval_ho_lt_spikes.append(heldout_spikes[:, -1, :])
 
                     heldout_masked = labels.clone()
                     heldout_masked[:,:,:-heldout_spikes.size(-1)] = -100
@@ -390,17 +387,12 @@ def train(model, train_dataloader, val_dataloader, device):
 
                     heldin_masked = labels.clone()
                     heldin_masked[:,:, -heldout_spikes.size(-1):] = -100
-
                     hi_loss = model(spikes, heldin_masked)[0]
                     heldin_loss.append(hi_loss)
 
             eval_rates = torch.cat(eval_rates, dim=0).exp() # turn into tensor and use exponential on rates
-            eval_spikes = torch.cat(eval_spikes, dim=0) 
 
             eval_ho_spikes = torch.cat(eval_ho_spikes, dim=0).cpu().numpy() # turn into tensor
-
-            eval_lt_rates = torch.cat(eval_lt_rates, dim=0).exp() # turn into tensor and use exponential on rates
-            eval_ho_lt_spikes = torch.unsqueeze(torch.cat(eval_ho_lt_spikes, dim=0), dim=0).cpu().numpy() # turn into tensor
 
             all_loss = torch.cat(all_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
             heldout_loss = torch.cat(heldout_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
@@ -408,27 +400,21 @@ def train(model, train_dataloader, val_dataloader, device):
 
             hldt_splt = [model.n_heldin, heldout_spikes.size(-1)]
             eval_rates_heldout = torch.split(eval_rates, hldt_splt, -1)[1].cpu().numpy()
-            eval_rates_lt_heldout = torch.unsqueeze(torch.split(eval_lt_rates, hldt_splt, -1)[1], dim=0).cpu().numpy()
 
             co_bps = float(bits_per_spike(eval_rates_heldout, eval_ho_spikes))
-            lt_co_bps = float(bits_per_spike(eval_rates_lt_heldout, eval_ho_lt_spikes))
-            fp_bps = 0.0
+            lt_co_bps = float(bits_per_spike(np.expand_dims(eval_rates_heldout[:, -1, :], axis=-1), np.expand_dims(eval_ho_spikes[:, -1, :], axis=-1)))
             val_loss = np.mean(all_loss)
 
             # Save current model if it scores higher than the max_co_bps and is past the save_min_bps
-            if (config['setup']['save_model'] and
-                co_bps > config['setup']['save_min_bps'] and
-                co_bps > max_co_bps
-            ):
-                torch.save(model, save_path+'best_co_bps.pt')
-                max_co_bps = co_bps
-            
             if (config['setup']['save_model'] and
                 lt_co_bps > config['setup']['save_min_bps'] and
                 lt_co_bps > max_lt_co_bps
             ):
                 torch.save(model, save_path+'best_lt_co_bps.pt')
                 max_lt_co_bps = lt_co_bps
+                es_counter = 0
+
+            else: es_counter += 1
 
             results_dict = {
                 'epoch': epoch,
@@ -437,20 +423,20 @@ def train(model, train_dataloader, val_dataloader, device):
                 'co_bps': co_bps,
                 'lt_co_bps': lt_co_bps,
                 'forward_loss': 0,
-                'fp_bps': fp_bps,
                 'heldin_loss': np.mean(heldin_loss),
             }
+
             # Update the report above the progress bar and upload to wandb
             upload_print_results(config, results_dict, progress_bar, save_path)
 
             # If co-bps is lower than the es_min_bps, then stop the training
-            if (config['train']['early_stopping'] and
+            if (es_counter >=  config['train']['es_patience'] or (
+                config['train']['early_stopping'] and
                 epoch > config['train']['epochs'] * config['train']['es_chk_pnt'] and
                 co_bps < config['train']['es_min_bps']
-            ):
-                progress_bar.display(' '*progress_bar.ncols, pos=0) # flush the screen
-                progress_bar.display(' '*progress_bar.ncols, pos=1)
-                progress_bar.display(' '*progress_bar.ncols, pos=2)
+            )):
+                for i in range(3):
+                    progress_bar.display(' '*progress_bar.ncols, pos=0) # flush the screen
                 progress_bar.close()
                 print('\n\n! Early Stopping !\n')
                 break

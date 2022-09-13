@@ -3,6 +3,7 @@
 #───────#
 import os
 import sys
+import random
 import logging
 import requests
 import os.path as osp
@@ -10,6 +11,7 @@ import os.path as osp
 import h5py
 import torch
 import numpy as np
+import scipy.signal as signal
 from tqdm.auto import tqdm
 from torch.utils import data
 from nlb_tools import make_tensors
@@ -21,6 +23,7 @@ from nlb_tools.make_tensors import (
     make_train_input_tensors,
     make_eval_input_tensors,
     make_eval_target_tensors)
+from utils import set_seeds
 
 import warnings; warnings.simplefilter('ignore')
 '''────────────────────────────── datasets.py ───────────────────────────────'''
@@ -76,84 +79,112 @@ def get_dataloaders(config, mode):
                                                   DataLoader. In 'none' this is
                                                   None.
     '''
-    data_path = config['setup']['data_dir'] + config['setup']['dataset'] + '.h5'
+    data_path = f'{config["setup"]["data_dir"]}{config["setup"]["dataset"]}'
+    data_path += f'_{config["train"]["seq_len"]}_{config["train"]["overlap"]}'
+    data_path += f'_{config["train"]["lag"]}.h5'
+
     generator = torch.Generator()
     generator.manual_seed(config['setup']['seed'])
 
-    if mode == 'original':
+    def _init_fn(worker_id):
+        set_seeds(config)
+    
+    if mode == 'train':
+        # train_data = Dataset(config, data_path, 'train')
+        # train_dataloader = train_data.get_dataloader(generator, shuffle=True)
+        # return train_dataloader
+        print('test')
+
+    elif mode == 'train_val':
         train_data = Dataset(config, data_path, 'train')
-        val_data = Dataset(config, data_path, 'val')
 
-        val_data.clip_val(train_data.spikes_heldin.max().item() + 3)
-        train_dataloader = train_data.get_dataloader(generator, shuffle=True)
-        val_dataloader = val_data.get_dataloader(generator, shuffle=False)
-        return train_dataloader, val_dataloader
+        n_samples = len(train_data)
+        split_index = int(0.2 * n_samples)
+        shuffled_indicies = torch.randperm(n_samples, generator=generator)
 
-    if mode == 'cross-val':
-        train_data = Dataset(config, data_path, 'train')
-        val_data = Dataset(config, data_path, 'val')
+        train_indicies = list(shuffled_indicies[:split_index])
+        val_indicies = list(shuffled_indicies[split_index:])
 
-        val_data.clip_val(train_data.spikes_heldin.max().item() + 3)
-        train_dataloader = train_data.get_dataloader(generator, shuffle=True)
-        val_dataloader = val_data.get_dataloader(generator, shuffle=False)
-        return train_dataloader, val_dataloader
-
-    elif mode == 'random':
-        trainval_data = Dataset(config, data_path, 'trainval')
-
-        n_samples = len(trainval_data)
-        shuf_gen = torch.Generator()
-        shuf_gen.manual_seed(config['setup']['subset_seed'])
-        shuffled_inds = torch.randperm(n_samples, generator=shuf_gen)
-
-        split_ind = int((1 - config['train']['val_ratio']) * n_samples)
-        train_inds = list(shuffled_inds[:split_ind])
-        val_inds = list(shuffled_inds[split_ind:])
         train_dataloader = torch.utils.data.DataLoader(
-            torch.utils.data.Subset(trainval_data, train_inds),
+            torch.utils.data.Subset(train_data, train_indicies),
             batch_size=config['train']['batch_size'],
             generator=generator,
-            shuffle=True)
+            worker_init_fn=_init_fn,
+            shuffle=True
+        )
+
         val_dataloader = torch.utils.data.DataLoader(
-            torch.utils.data.Subset(trainval_data, val_inds),
+            torch.utils.data.Subset(train_data, val_indicies),
             batch_size=config['train']['batch_size'],
-            generator=generator,
-            shuffle=False)
+            shuffle=False
+        )
+
         return train_dataloader, val_dataloader
+    
+    # elif mode == 'test':
+    #     test_data = Dataset(config, data_path, 'test')
 
-    elif mode == 'none':
-        trainval_data = Dataset(config, data_path, 'trainval')
+    #     test_dataloader = test_data.get_dataloader(generator, shuffle=False)
+    #     return test_dataloader
 
-        trainval_dataloader = trainval_data.get_dataloader(generator, shuffle=True)
-        return trainval_dataloader, None
+    # if mode == 'cross-val':
+    #     train_data = Dataset(config, data_path, 'train')
+    #     val_data = Dataset(config, data_path, 'val')
 
-    elif mode == 'test':
-        test_data = Dataset(config, data_path, 'test')
+    #     val_data.clip_val(train_data.spikes_heldin.max().item() + 3)
+    #     train_dataloader = train_data.get_dataloader(generator, shuffle=True)
+    #     val_dataloader = val_data.get_dataloader(generator, shuffle=False)
+    #     return train_dataloader, val_dataloader
 
-        test_dataloader = test_data.get_dataloader(generator, shuffle=False)
-        return test_dataloader
+    # elif mode == 'random':
+    #     trainval_data = Dataset(config, data_path, 'trainval')
 
-def chop_data(config, data):
+    #     n_samples = len(trainval_data)
+    #     shuf_gen = torch.Generator()
+    #     shuf_gen.manual_seed(config['setup']['seed'])
+    #     shuffled_inds = torch.randperm(n_samples, generator=shuf_gen)
+
+    #     split_ind = int((1 - config['train']['val_ratio']) * n_samples)
+    #     train_inds = list(shuffled_inds[:split_ind])
+    #     val_inds = list(shuffled_inds[split_ind:])
+
+    #     train_dataloader = torch.utils.data.DataLoader(
+    #         torch.utils.data.Subset(trainval_data, train_inds),
+    #         batch_size=config['train']['batch_size'],
+    #         generator=generator,
+    #         worker_init_fn=_init_fn,
+    #         shuffle=True)
+    #     val_dataloader = torch.utils.data.DataLoader(
+    #         torch.utils.data.Subset(trainval_data, val_inds),
+    #         batch_size=config['train']['batch_size'],
+    #         generator=generator,
+    #         shuffle=False)
+    #     return train_dataloader, val_dataloader
+
+
+
+def chop_data(data, chopsize, overlap, lag_bins):
+    ''' Chops data trial by trail (or segment by segment) into overlapping segments.'''
     chopped_data = []
-    # data = np.concatenate(data, axis=0)
     for trial in data:
+        if lag_bins > 0:
+            trial = trial[:-lag_bins, :]
         shape = (
-            int((trial.shape[0] - config['train']['overlap']) / (config['train']['seq_len'] - config['train']['overlap'])),
-            config['train']['seq_len'],
+            int((trial.shape[0] - overlap) / (chopsize - overlap)),
+            chopsize,
             trial.shape[-1],
         )
         strides = (
-            trial.strides[0] * (config['train']['seq_len'] - config['train']['overlap']),
+            trial.strides[0] * (chopsize - overlap),
             trial.strides[0],
             trial.strides[1],
         )
+
         chopped_trial = np.lib.stride_tricks.as_strided(trial, shape=shape, strides=strides).copy().astype('f')
         chopped_data.append(chopped_trial)
-    # shape = (int((data.shape[0] - (config['train']['seq_len'] - 1))), config['train']['seq_len'], data.shape[-1])
-    # strides = (data.strides[0], data.strides[0], data.strides[1])
-    # chopped_data = np.lib.stride_tricks.as_strided(data, shape=shape, strides=strides).copy().astype('f')
+
     chopped_data = np.array(chopped_data)
-    # return chopped_data
+
     return chopped_data.reshape((
         chopped_data.shape[0] * chopped_data.shape[1], 
         chopped_data.shape[2], 
@@ -171,11 +202,13 @@ class Dataset(data.Dataset):
             mode (str): ['test', 'train' , 'val', 'trainval'] The dataset type.
         '''
         super().__init__()
+        
         with h5py.File(filename, 'r') as h5file:
             h5dict = h5_to_dict(h5file)
             self.config = config
+            self.mode = mode
 
-            self.chop = config['train']['seq_len'] > 0
+            device = torch.device('cuda:0')
 
             def set_sizes(self):
                 ''' Helper function that assigns the number of samples, trial
@@ -183,82 +216,23 @@ class Dataset(data.Dataset):
                 number of heldout neurons.
                 '''
                 self.n_samples = self.spikes_heldin.shape[0]
-                self.tr_length = self.spikes_heldin.shape[1]
-                self.fp_length = self.spikes_all_fp.shape[1]
-                self.full_length = self.tr_length
-                # self.full_length = self.tr_length if self.chop else self.tr_length + self.fp_length
                 self.n_heldin = self.spikes_heldin.shape[2]
                 self.n_heldout = self.spikes_heldout.shape[2]
                 self.n_neurons = self.n_heldin + self.n_heldout
+                
+                self.max_train_spks = h5dict['train_spikes_heldin'].max().item() + 3
 
-            # train_val mode
             if mode == 'train':
-                spikes_heldin = h5dict['train_spikes_heldin'].astype(np.float32)
-                spikes_heldout = h5dict['train_spikes_heldout'].astype(np.float32)
-                spikes_all_fp = h5dict['train_spikes_all_fp'].astype(np.float32)
+                self.spikes_heldin = torch.Tensor(h5dict['train_spikes_heldin'].astype(np.float32)).to(device)
+                self.spikes_heldout = torch.Tensor(h5dict['train_spikes_heldout'].astype(np.float32)).to(device)
 
-                self.spikes_heldin = torch.tensor(chop_data(config, spikes_heldin) if self.chop else spikes_heldin)
-                self.spikes_heldout = torch.tensor(chop_data(config, spikes_heldout) if self.chop else spikes_heldout)
-                self.spikes_all_fp = torch.tensor(spikes_all_fp) if not self.chop else torch.zeros_like(self.spikes_heldin)
                 set_sizes(self)
 
-                self.spikes_heldin = self.spikes_heldin.to(torch.device('cuda:0'))
-                self.spikes_heldout = self.spikes_heldout.to(torch.device('cuda:0'))
-                self.spikes_all_fp = self.spikes_all_fp.to(torch.device('cuda:0'))
-
-            if mode == 'val':
-                spikes_heldin = h5dict['eval_spikes_heldin'].astype(np.float32)
-                spikes_heldout = h5dict['eval_spikes_heldout'].astype(np.float32)
-                spikes_all_fp = h5dict['eval_spikes_all_fp'].astype(np.float32)
-                self.spikes_pre_chop = spikes_heldin
-
-                self.spikes_heldin = torch.tensor(chop_data(config, spikes_heldin) if self.chop else spikes_heldin)
-                self.spikes_heldout = torch.tensor(chop_data(config, spikes_heldout) if self.chop else spikes_heldout)
-                self.spikes_all_fp = torch.tensor(spikes_all_fp) if not self.chop else torch.zeros_like(self.spikes_heldin)
-                set_sizes(self)
-
-                self.spikes_heldin = self.spikes_heldin.to(torch.device('cuda:0'))
-                self.spikes_heldout = self.spikes_heldout.to(torch.device('cuda:0'))
-                self.spikes_all_fp = self.spikes_all_fp.to(torch.device('cuda:0'))
-
-            # trainval mode
-            if mode == 'trainval':
-                spikes_heldin = h5dict['trainval_spikes_heldin'].astype(np.float32)
-                spikes_heldout = h5dict['trainval_spikes_heldout'].astype(np.float32)
-                spikes_all_fp = h5dict['trainval_spikes_all_fp'].astype(np.float32)
-
-                self.spikes_heldin = torch.tensor(chop_data(config, spikes_heldin) if self.chop else spikes_heldin)
-                self.spikes_heldout = torch.tensor(chop_data(config, spikes_heldout) if self.chop else spikes_heldout)
-                self.spikes_all_fp = torch.tensor(spikes_all_fp) if not self.chop else torch.zeros_like(self.spikes_heldin)
-                set_sizes(self)
-
-                self.spikes_heldin = self.spikes_heldin.to(torch.device('cuda:0'))
-                self.spikes_heldout = self.spikes_heldout.to(torch.device('cuda:0'))
-                self.spikes_all_fp = self.spikes_all_fp.to(torch.device('cuda:0'))
-
-            # test mode
             elif mode == 'test':
-                heldin = h5dict['test_spikes_heldin']
-                heldout = h5dict['test_spikes_heldout']
-                samples = h5dict['test_spikes_heldin'].shape[0]
-                # heldout = np.zeros((
-                #     samples,
-                #     h5dict['train_spikes_heldout'].shape[1],
-                #     h5dict['train_spikes_heldout'].shape[2]
-                # ))
-                forward = np.zeros((
-                    samples,
-                    h5dict['train_spikes_all_fp'].shape[1],
-                    h5dict['train_spikes_all_fp'].shape[2]
-                ))
-                self.spikes_heldin = torch.tensor(heldin.astype(np.float32))
-                self.spikes_heldout = torch.tensor(heldout.astype(np.float32))
-                self.spikes_all_fp = torch.tensor(forward.astype(np.float32))
-                set_sizes(self)
+                self.spikes_heldin = torch.Tensor(h5dict['test_spikes_heldin'].astype(np.float32)).to(device)
+                self.spikes_heldout = torch.Tensor(h5dict['test_spikes_heldout'].astype(np.float32)).to(device)
 
-                self.spikes_heldin = self.spikes_heldin.to(torch.device('cuda:0'))
-                self.spikes_heldout = self.spikes_heldout.to(torch.device('cuda:0'))
-                self.spikes_all_fp = self.spikes_all_fp.to(torch.device('cuda:0'))
+                set_sizes(self)
 
     def __len__(self):
         '''
@@ -279,18 +253,17 @@ class Dataset(data.Dataset):
         return (
             self.spikes_heldin[index],
             self.spikes_heldout[index],
-            self.spikes_all_fp[index]
-        )
+        ) 
 
-    def clip_val(self, max):
-        self.spikes_heldin = torch.clamp(self.spikes_heldin, max=max)
+    def clip_max(self, max, indicies):
+        self.spikes_heldin[indicies] = torch.clamp(self.spikes_heldin[indicies], max=max)
 
     def get_dataloader(self, generator, shuffle=True):
         return data.DataLoader(self,
-            batch_size=self.config['train']['batch_size'],
+            batch_size=(
+                self.config['train']['batch_size'] if self.mode == 'train' else 4096
+            ),
             generator=generator,
-            # pin_memory=True,
-            # num_workers=1,
             shuffle=shuffle)
 
 def verify_dataset(config):
@@ -300,176 +273,150 @@ def verify_dataset(config):
     Args:
         config (dict): A config object.
     '''
-    data_path = config['setup']['data_dir'] + config['setup']['dataset'] + '.h5'
-    if os.path.isfile(data_path):
+    path = f'{config["setup"]["data_dir"]}{config["setup"]["dataset"]}'
+    path += f'_{config["train"]["seq_len"]}_{config["train"]["overlap"]}'
+    path += f'_{config["train"]["lag"]}.h5'
+
+    if os.path.isfile(path):
         return None
     else:
-        print('Dataset could not be found in: '+data_path)
-        response = input('Would you like to download it? (y/n): ')
+        print(f'Dataset could not be found at: {path}')
+        response = input('Would you like to create it? (y/n): ')
         while response != 'y' and response != 'n':
             response = input("Please enter 'y' or 'n': ")
         if response == 'n': exit()
-        download_datasets(config['setup']['data_dir'], [config['setup']['dataset']])
 
-def download_datasets(path, datasets = None) -> None:
+        if config['setup']['dataset'] == 'mc_rtt':
+            download_mc_rtt(config['setup']['data_dir'])
+
+        create_h5_data(
+            config["setup"]["data_dir"], 
+            config["setup"]["dataset"],
+            config["train"]["seq_len"],
+            config["train"]["overlap"],
+            config["train"]["lag"]
+        )
+
+
+def download_mc_rtt(data_dir):
     ''' Download datasets, combine train/test & prep data, delete old files.
 
-    Adds datasets specified in 'datasets' to download list, if 'datasets' is
-    None then download all. Once downloaded, unpack and combine the train / test
-    '.nwb' files into a single '.h5' file and store in path. This function WILL
-    overwrite dataset files!
-
     Args:
-        path (str): The path where the '.h5' files will be downloaded.
-        datasets (list[str]): The datasets to download, if nothing is passed
-            then all datasets will be downloaded.
+        path (str): The path
     '''
-    print('Downloading Datasets: '+str(datasets if datasets != None else '[ALL]'))
-    # Allow '~' in path
-    path = osp.expanduser(path)
-    if not os.path.isdir(path): os.makedirs(path)
-    # If nothing was passed to datasets, use all datasets from id_dict
-    dataset_list = datasets if datasets else id_dict.keys()
-    total_files = len(dataset_list) * 2 # train and test for each
 
-    # tqdm is used to display progress bars
-    # Need 2 formats because max files download at once is 14, min is 2
-    def_format = ('{desc}: {percentage:3.0f}% |{bar}| ', ' / %s files' % total_files)
-    fc_3dig = '{n_fmt[0]}{n_fmt[1]}{n_fmt[2]}'
-    fc_4dig = '{n_fmt[0]}{n_fmt[1]}{n_fmt[2]}{n_fmt[3]}'
-    fc = fc_3dig if total_files < 10 else fc_4dig
-    # Make total progress bar
-    progress_bar_total = tqdm(
-        total=total_files, unit='file',
-        unit_scale=True,
-        desc='Total',
-        bar_format=def_format[0] + fc + def_format[1]
-    )
+    filepath = f'{data_dir}mc_rtt.nwb'
 
-    # dataset_list contains strings of all datasets: 'mc_maze', 'mc_rtt', ...
-    for i, dataset in enumerate(dataset_list):
-        # id_dict has 2 unique IDs for each dataset, 1 for training and 1 for test
-        for dataset_type in id_dict[dataset].keys():
-            # Download path is is appended with the new file name
-            trial_type = dataset_type.split('_')[-1]
-            filepath = path + dataset + '_' + trial_type + '.nwb'
-            # Combine the unique IDs and the Dandi api url to download a
-            # specific dataset to avoid the use of Dandi CLI
-            dataset_id = id_dict[dataset][dataset_type]
-            url = api_url[0] + dataset_id + api_url[1]
-            response = requests.get(url, stream=True)
-            # Get dataset file size
-            total_size_in_bytes= int(response.headers.get('content-length', 0))
-            # Make individual file progress bar
-            progress_bar_file = tqdm(
-                total=total_size_in_bytes, unit='iB',
-                unit_scale=True, leave=False,
-                desc=dataset_type,
-                bar_format='{desc}: {percentage:3.0f}% |{bar}| {n_fmt} / {total_fmt}'
-                )
-            # Start download and update progress bars
-            with open(filepath, 'wb') as file:
-                for data in response.iter_content(1024): #1024
-                    progress_bar_file.update(len(data))
-                    progress_bar_total.update(len(data) / total_size_in_bytes)
-                    file.write(data)
-            # Close file progress bar once file downloaded
-            progress_bar_file.close()
-        progress_bar_total.refresh()
-        # Extract data from nwb files
-        progress_bar_unpack = tqdm(
-            total=100, unit='%',
+    if not osp.isfile(filepath):
+        print('\nDownloading mc_rtt.nwb')
+
+        # Download a specific dataset to avoid the use of Dandi CLI
+        url = 'https://api.dandiarchive.org/api/assets/2ae6bf3c-788b-4ece-8c01-4b4a5680b25b/download/'
+        response = requests.get(url, stream=True)
+        
+        # Get dataset file size
+        total_size_in_bytes= int(response.headers.get('content-length', 0))
+        
+        # Make progress bar
+        progress_bar_file = tqdm(
+            total=total_size_in_bytes, unit='iB',
             unit_scale=True, leave=False,
-            desc='Unpacking '+dataset,
-            bar_format='{desc}: {percentage:3.0f}% |{bar}'
+            # desc=dataset_type,
+            bar_format='{desc}: {percentage:3.0f}% |{bar}| {n_fmt} / {total_fmt}'
             )
-        # Turn the two .nwb files in path into one .h5 file and save
-        unpack(path, dataset, progress_bar_unpack)
-        progress_bar_unpack.close()
-    # All files downloaded and unpacked
-    progress_bar_total.update(0.001)
-    progress_bar_total.close()
-    print('\n\nAll Done!')
 
+        # Start download and update progress bars
+        with open(filepath, 'wb') as file:
+            for data in response.iter_content(1024): #1024
+                progress_bar_file.update(len(data))
+                file.write(data)
 
-def unpack(path, dataset, progress_bar):
-    ''' Turn train/test '.nwb' files into a single .h5 file and save
+        # Close file progress bar once file downloaded
+        progress_bar_file.close()
 
-    There should only be 2 files in the folder passed to path, 1 train & 1 test
-    file for a single dataset. First, combine heldin/out spike forward data into
-    '(train/val)_spikes_all_fp' for both the train and test sets of each dataset.
-    Then combine the downloaded files, '(dataset)_train.nwb' and
-    '(dataset)_test.nwb', to create '(dataset).h5' for each dataset. Store the
-    '.h5' file in 'path' and delete the train and test '.nwb' files for each dataset.
+def seg_arr(data):
+    ''' Segments up a continous datastream split by Nans
     '''
-    dataset_obj = NWBDataset(path) # NWB Object
-    progress_bar.update(10)
-    dataset_obj.resample(5) # bin width of 5 ms
-    # pair_corr, chan_names_to_drop = dataset_obj.get_pair_xcorr('spikes',
-    #                                                    threshold=0.01,
-    #                                                    zero_chans=True)
-    progress_bar.update(10)
-    # ! Training and validation set dictionaries
-    train_dict = make_train_input_tensors(
-        dataset_obj, dataset_name=dataset,
-        trial_split='train', save_file=False,
-        include_forward_pred=True
-    )
-    # dataset_obj = NWBDataset(path) # NWB Object
-    # dataset_obj.resample(5) # bin width of 5 ms
-    progress_bar.update(10)
-    val_dict = make_eval_input_tensors(
-        dataset_obj, dataset_name=dataset,
-        trial_split='val', save_file=False
-    )
-    progress_bar.update(10)
-    val_target_dict = make_eval_target_tensors(
-        dataset_obj, dataset_name=dataset, save_file=False
-    )
-    progress_bar.update(10)
-    train_dict['train_spikes_all_fp'] = np.concatenate(
-        [train_dict.pop('train_spikes_heldin_forward'),
-        train_dict.pop('train_spikes_heldout_forward')],
-        -1 # Combine neurons
-    )
-    progress_bar.update(10)
-    val_frwd_dict = val_target_dict[dataset]
-    val_dict['eval_spikes_all_fp'] = np.concatenate(
-        [val_frwd_dict.pop('eval_spikes_heldin_forward'),
-        val_frwd_dict.pop('eval_spikes_heldout_forward')],
-        -1 # Combine neurons
-    )
-    progress_bar.update(10)
-    # ! Trainval dictionary
-    trainval_dict = make_train_input_tensors(
-        dataset_obj, dataset_name=dataset,
-        trial_split=['train','val'], save_file=False,
-        include_forward_pred=True
-    )
-    trainval_dict['trainval_spikes_heldin'] = trainval_dict.pop('train_spikes_heldin')
-    trainval_dict['trainval_spikes_heldout'] = trainval_dict.pop('train_spikes_heldout')
-    trainval_dict['trainval_spikes_all_fp'] = np.concatenate(
-        [trainval_dict.pop('train_spikes_heldin_forward'),
-        trainval_dict.pop('train_spikes_heldout_forward')],
-        -1 # Combine neurons
-    )
-    progress_bar.update(10)
-    # ! Test set dictionary
-    test_dict = make_eval_input_tensors(
-        dataset_obj, dataset_name=dataset,
-        trial_split='test', save_file=False
-    )
-    # Rename eval to test
-    test_dict['test_spikes_heldin'] = test_dict.pop('eval_spikes_heldin')
-    progress_bar.update(10)
-    # Create single dict and save to .h5 file
-    h5_file = {**train_dict, **val_dict, **trainval_dict, **test_dict}
-    filename = path + dataset + '.h5'
+    # shape of data: T (time) x C (channels)
+    tmp_list = []
+    for channel in data:
+        tmp_list.append([channel[seg] for seg in np.ma.clump_unmasked(np.ma.masked_invalid(channel))])
+
+    return np.transpose(np.array(tmp_list), (1, 2, 0))
+
+
+def create_h5_data(data_dir, dataset, seq_len, overlap, lag):
+    ''' Turn train/test '.nwb' files into a single .h5 file and save
+    '''
+    filepath = f'{data_dir}{dataset}.nwb'
+
+    dataset_obj = NWBDataset(filepath) # NWB Object
+    dataset_obj.resample(10)
+
+    vel_trans = dataset_obj.data.finger_vel.to_numpy().T # idx 0 is x; idx 1 is y
+    hi_spikes_trans = dataset_obj.data.spikes.to_numpy().T
+    ho_spikes_trans = dataset_obj.data.heldout_spikes.to_numpy().T
+
+    vel_segments = seg_arr(vel_trans) # (4, 16220, 2)
+    hi_spike_segments = seg_arr(hi_spikes_trans) # (4, 16220, 98)
+    ho_spike_segments = seg_arr(ho_spikes_trans) # (4, 16220, 32)
+
+    lag_bins = int(round(lag / dataset_obj.bin_width))
+    lagged_vel_segments = np.array([seg[lag_bins:] for seg in vel_segments])
+    train_vel_segments, test_vel_segments = lagged_vel_segments[:3], np.expand_dims(lagged_vel_segments[3], 0)
+
+    train_vel_segments = chop_data(train_vel_segments, seq_len, overlap, lag_bins=0)[:, -1, :]
+    test_vel_segments = chop_data(test_vel_segments, seq_len, overlap, lag_bins=0)[:, -1, :]
+
+    train_hi_segments = chop_data(hi_spike_segments[:3], seq_len, overlap, lag_bins) # (8097, 30, 98)
+    train_ho_segments = chop_data(ho_spike_segments[:3], seq_len, overlap, lag_bins) # (8097, 30, 32)
+
+    test_hi_segments = chop_data(np.expand_dims(hi_spike_segments[3], 0), seq_len, overlap, lag_bins) # (16191, 30, 98)
+    test_ho_segments = chop_data(np.expand_dims(ho_spike_segments[3], 0), seq_len, overlap, lag_bins) # (16191, 30, 32)
+
+    kern_sd = int(round(30 / dataset_obj.bin_width))
+    window_30ms = signal.gaussian(kern_sd * 6, kern_sd, sym=True)
+    window_30ms /= np.sum(window_30ms)
+    filt_30 = lambda x: np.convolve(x, window_30ms, 'same')
+
+    kern_sd = int(round(50 / dataset_obj.bin_width))
+    window_50ms = signal.gaussian(kern_sd * 6, kern_sd, sym=True)
+    window_50ms /= np.sum(window_50ms)
+    filt_50 = lambda x: np.convolve(x, window_50ms, 'same')
+
+    kern_sd = int(round(80 / dataset_obj.bin_width))
+    window_80ms = signal.gaussian(kern_sd * 6, kern_sd, sym=True)
+    window_80ms /= np.sum(window_80ms)
+    filt_80 = lambda x: np.convolve(x, window_80ms, 'same')
+
+    test_ho_30_smth_spikes = np.apply_along_axis(filt_30, 0, test_ho_segments[:, -1, :])
+    test_hi_30_smth_spikes = np.apply_along_axis(filt_30, 0, test_hi_segments[:, -1, :])
+    test_ho_50_smth_spikes = np.apply_along_axis(filt_50, 0, test_ho_segments[:, -1, :])
+    test_hi_50_smth_spikes = np.apply_along_axis(filt_50, 0, test_hi_segments[:, -1, :])
+    test_ho_80_smth_spikes = np.apply_along_axis(filt_80, 0, test_ho_segments[:, -1, :])
+    test_hi_80_smth_spikes = np.apply_along_axis(filt_80, 0, test_hi_segments[:, -1, :])
+    
+    train_dict = {
+        'train_spikes_heldin': train_hi_segments,
+        'train_spikes_heldout': train_ho_segments,
+        'train_vel_segments': train_vel_segments
+    }
+
+    test_dict = {
+        'test_spikes_heldin': test_hi_segments,
+        'test_spikes_heldout': test_ho_segments,
+        'test_ho_30_smth_spikes': test_ho_30_smth_spikes,
+        'test_hi_30_smth_spikes': test_hi_30_smth_spikes,
+        'test_ho_50_smth_spikes': test_ho_50_smth_spikes,
+        'test_hi_50_smth_spikes': test_hi_50_smth_spikes,
+        'test_ho_80_smth_spikes': test_ho_80_smth_spikes,
+        'test_hi_80_smth_spikes': test_hi_80_smth_spikes,
+        'test_vel_segments': test_vel_segments
+    }
+
+    h5_file = {**train_dict, **test_dict}
+    filename = f'{data_dir}{dataset}_{seq_len}_{overlap}_{lag}.h5'
+
     # Remove older version if it exists
     if osp.isfile(filename): os.remove(filename)
     save_to_h5(h5_file, filename, overwrite=True)
-    progress_bar.update(10)
-    # Delete the .nwb files
-    remove_path = path + dataset + '_'
-    # for trial_type in ['train', 'test']:
-        # os.remove(remove_path + trial_type + '.nwb')

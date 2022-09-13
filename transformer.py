@@ -13,7 +13,7 @@ from torch.nn.init import constant_, xavier_normal_, xavier_uniform_
 from torch.nn.modules.linear import NonDynamicallyQuantizableLinear as NDQL
 from torch.nn import Transformer, TransformerEncoder, TransformerEncoderLayer
 #────#
-from setup import get_norm
+from utils import get_norm
 '''───────────────────────────── transformer.py ─────────────────────────────'''
 # This file contains the NDT-U model.
 
@@ -81,13 +81,13 @@ class EncoderLayer(TransformerEncoderLayer):
         dropout1 (nn.Dropout): Dropout.
         dropout2 (nn.Dropout): Dropout.
     '''
-    def __init__(self, config, n_neurons, full_length):
+    def __init__(self, config, n_neurons, seq_len):
         ''' init EncoderLayer
 
         Args:
             config (dict): The config.
             n_neurons (int): Number of neurons.
-            full_length (int): Length of trial + forward pass
+            seq_len (int): Length of trial + forward pass
         '''
         super().__init__(
             n_neurons, nhead=1,
@@ -144,14 +144,14 @@ class Encoder(Module):
         layers (ModuleList): A list of EncoderLayers.
         norm (function): Normalization specified in config.
     '''
-    def __init__(self, config, n_neurons, encoder_layer, full_length):
+    def __init__(self, config, n_neurons, encoder_layer, seq_len):
         ''' init Encoder.
 
         Args:
             config (dict): The config.
             n_neurons (int): Number of neurons.
             encoder_layer (EncoderLayer): The encoder to stack.
-            full_length (int): Length of trial + forward pass
+            seq_len (int): Length of trial + forward pass
         '''
         super().__init__()
         n_layers = config['model']['n_layers']
@@ -178,7 +178,7 @@ class Transformer(Module):
         n_heldin (int): Number of held-in neurons.
         n_neurons (int): Number of neurons.
         tr_length (int): Trial length (no forward).
-        full_length (int): Trial length + forward pass length.
+        seq_len (int): Trial length + forward pass length.
         scale (float): What to scale neruon activity by.
         n_layers (int): Number of layers.
         rate_dropout (float): The percentage of dropout applied to the rates.
@@ -207,29 +207,23 @@ class Transformer(Module):
         self.name = name
 
         self.n_heldin = dataset.n_heldin
-        self.n_neurons = dataset.n_neurons if config['model']['emb_size'] == 0 else config['model']['emb_size']
-        self.tr_length = dataset.tr_length
-        self.full_length = dataset.full_length
+        self.n_neurons = dataset.n_neurons
+        self.seq_len = config['train']['seq_len']
+        self.max_train_spks = dataset.max_train_spks
 
         self.scale = math.sqrt(self.n_neurons)
         self.n_layers = config['model']['n_layers']
         self.rate_dropout = nn.Dropout(config['model']['dropout_rates'])
         self.embedding_dropout = nn.Dropout(p=config['model']['dropout_embedding'])
 
-        pe = torch.zeros(self.full_length, self.n_neurons)
-        position = torch.arange(0, self.full_length, dtype=torch.float).unsqueeze(1)
+        pe = torch.zeros(self.seq_len, self.n_neurons)
+        position = torch.arange(0, self.seq_len, dtype=torch.float).unsqueeze(1)
         self.register_buffer('pe', position.long())
-        self.pos_embedding = nn.Embedding(self.full_length, self.n_neurons)
+        self.pos_embedding = nn.Embedding(self.seq_len, self.n_neurons)
 
-        encoder_layer = EncoderLayer(config, self.n_neurons, self.full_length)
-        self.encoder = Encoder(config, self.n_neurons, encoder_layer, self.full_length)
+        encoder_layer = EncoderLayer(config, self.n_neurons, self.seq_len)
+        self.encoder = Encoder(config, self.n_neurons, encoder_layer, self.seq_len)
         self.decoder = nn.Linear(self.n_neurons, dataset.n_neurons)
-
-        if config['model']['emb_size'] != 0:
-            self.pre_encoder = nn.Linear(dataset.n_neurons, config['model']['emb_size'])
-            self.pre_encoder.bias.data.zero_()
-            self.pre_encoder.weight.data.uniform_(
-                -config['model']['initrange'], config['model']['initrange'])
 
         self.attn_mask = None
         self.loss_prob_mask = None
@@ -242,7 +236,7 @@ class Transformer(Module):
         self.decoder.weight.data.uniform_(
             -config['model']['initrange'], config['model']['initrange'])
 
-        if config['train']['normal_init']:
+        if config['model']['normal_init']:
             std = (2 / (5 * (self.n_neurons))) ** 0.5
             for parameter in self.parameters():
                 if parameter.dim() > 1:
@@ -258,20 +252,23 @@ class Transformer(Module):
             final_loss (Tensor): The loss. Size=[1]
             pred_rates (Tensor): The predicted rates. Size=[B, T, N]
         '''
+        if not self.training: 
+            spikes = torch.clamp(spikes, max=self.max_train_spks)
+
         spikes = spikes.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
-        if self.config['model']['emb_size'] != 0:
-            spikes = self.pre_encoder(spikes)
         spikes += self.pos_embedding(self.pe)
         spikes = self.embedding_dropout(spikes)
+
         attn_mask = self.get_attn_mask(spikes) # [T, T]
         output = self.encoder(spikes, attn_mask)
         output = self.rate_dropout(output)
+
         pred_rates = self.decoder(output).permute(1, 0, 2)  # [T x B x N] ->  [B x T x N]
         if labels == None: return pred_rates
+
         loss = self.classifier(pred_rates, labels)
         masked_loss = loss[labels != -100]
         final_loss = masked_loss.mean()
-        # final_loss = loss.mean()
         return final_loss.unsqueeze(0), pred_rates
 
     def get_attn_mask(self, src):
@@ -295,7 +292,7 @@ class Transformer(Module):
         self.attn_mask = mask
         return mask
 
-    def preprocess_batch(self, batch, expand_p, heldout_spikes, forward_spikes):
+    def preprocess_batch(self, batch, expand_p, heldout_spikes):
         ''' Zero masks and randomizes the batch. Also returns the labels of which indicies
         should be used to compute the loss with.
 
@@ -350,17 +347,11 @@ class Transformer(Module):
             self.random_prob_mask = torch.full(labels.shape, randomize_ratio, device=batch.device, dtype=torch.float32)
         # indices_randomized = torch.bernoulli(self.random_prob_mask).bool() & ~indices_zero_masked
         indices_randomized = torch.bernoulli(self.random_prob_mask).bool() & loss_mask & ~indices_zero_masked
-        if not config['train']['add_one_random']:
-            random_spikes = torch.randint(batch.max().long(), labels.shape, dtype=torch.long, device=batch.device)
-            batch[indices_randomized] = random_spikes.float()[indices_randomized]
-        else:
-            batch[indices_randomized] += 1.0
+        random_spikes = torch.randint(batch.max().long(), labels.shape, dtype=torch.long, device=batch.device)
+        batch[indices_randomized] = random_spikes.float()[indices_randomized]
 
         # Add fake heldout and forward
         batch = torch.cat([batch, torch.zeros_like(heldout_spikes)], -1)
         labels = torch.cat([labels, heldout_spikes], -1)
-        # if not config['train']['seq_len'] > 0:
-        #     batch = torch.cat([batch, torch.zeros_like(forward_spikes)], 1)
-        #     labels = torch.cat([labels, forward_spikes], 1)
 
         return batch, labels
