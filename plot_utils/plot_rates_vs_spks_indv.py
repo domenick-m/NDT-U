@@ -1,6 +1,6 @@
 from inspect import cleandoc
 import plotly.graph_objects as go
-
+import numpy as np
 def plot_rates_vs_spks_indv(
     rates, 
     c_rates, 
@@ -10,9 +10,15 @@ def plot_rates_vs_spks_indv(
     smth_spikes_80,
     heldin
 ):
+    rates = rates.astype(np.float16)
+    c_rates = c_rates.astype(np.float16)
+    ac_rates = ac_rates.astype(np.float16)
+    smth_spikes_30 = smth_spikes_30.astype(np.float16)
+    smth_spikes_50 = smth_spikes_50.astype(np.float16)
+    smth_spikes_80 = smth_spikes_80.astype(np.float16)
 
     fig = go.Figure()
-    x_range=2500
+    x_range=1000
 
     rates_arr = [] 
     c_rates_arr = [] 
@@ -33,7 +39,8 @@ def plot_rates_vs_spks_indv(
     fig.add_trace(go.Scatter(y=rates_arr[0], line=dict(color="#e15759"), name="NDT Rates",))
     fig.add_trace(go.Scatter(y=smth_spikes_30_arr[0], line=dict(color="#4e79a7"), name="Smooth Spikes"))
   
-    min, max = (1, 98) if heldin else (99, 130)
+    min, max = (1, 25) if heldin else (99, 130)
+    # min, max = (1, 98) if heldin else (99, 130)
 
     for i in range(min, max):
         rates_arr.append(list(rates[:x_range, i]))
@@ -52,8 +59,11 @@ def plot_rates_vs_spks_indv(
         )
     )
 
-    rate_idx = [i for i in range(0, 196, 2)]
-    smth_idx = [i for i in range(1, 196, 2)]
+    rate_idx = [i for i in range(0, 50, 2)]
+    smth_idx = [i for i in range(1, 50, 2)]
+
+    # rate_idx = [i for i in range(0, 196, 2)]
+    # smth_idx = [i for i in range(1, 196, 2)]
 
     spks_smth_buttons = [
         {
@@ -98,10 +108,12 @@ def plot_rates_vs_spks_indv(
     ]
 
     ch_sel_buttons = []
-    min, max = (0, 98) if heldin else (98, 130)
+    min, max = (0, 25) if heldin else (98, 130)
+    # min, max = (0, 98) if heldin else (98, 130)
 
     for i in range(min, max):
-        vis_list = [False for i in range(196 if heldin else 64)]
+        vis_list = [False for i in range(50 if heldin else 64)]
+        # vis_list = [False for i in range(196 if heldin else 64)]
         vis_list[i*2 if heldin else (i-98)*2] = True
         vis_list[i*2+1 if heldin else (i-98)*2+1] = True
         ch_sel_buttons.append(dict(
@@ -116,31 +128,31 @@ def plot_rates_vs_spks_indv(
         {
             'buttons':ch_sel_buttons, 
             'direction': 'down',
-            'pad': {"r": 0, "t": 0, "b":20},
+            'pad': {"r": 0, "t": 0, "b":0, "l":0},
             'showactive':True,
-            'x':0.5,
-            'xanchor':"center",
-            'y':1.00,
+            'x':0.075,
+            'xanchor':"left",
+            'y':1.10,
             'yanchor':"bottom" 
         },
         {
             'buttons':spks_smth_buttons, 
             'direction': 'down',
-            'pad': {"r": 0, "t": 0, "b":20},
+            'pad': {"r": 0, "t": 0, "b":0, "l":0},
             'showactive':True,
-            'x':0.25,
+            'x':0.5,
             'xanchor':"center",
-            'y':1.00,
+            'y':1.10,
             'yanchor':"bottom"
         },
         {
             'buttons':rates_smth_buttons, 
             'direction': 'down',
-            'pad': {"r": 0, "t": 0, "b":20},
+            'pad': {"r": 0, "t": 0, "b":0, "l":0},
             'showactive':True,
-            'x':0.75,
-            'xanchor':"center",
-            'y':1.00,
+            'x':1.0,
+            'xanchor':"right",
+            'y':1.10,
             'yanchor':"bottom"
         }
     ]
@@ -166,29 +178,51 @@ def plot_rates_vs_spks_indv(
     fig.update_layout(
         legend=dict(
             yanchor="top",
-            y=1.1,
+            y=1.5,
             xanchor="right",
             x=1.00,
         ),
         yaxis_title="Spikes per Second",
         title={
             'text': f'Rates vs Smoothed Spikes - {"Heldin" if heldin else "Heldout"} Channels',
-            'y':1.2,
+            'y':0.97,
             'x':0.1,
             'xanchor': 'left',
             'yanchor': 'top'
         },
         annotations=[
             dict(
-                text="Trace type:", 
+                text="Channel:", 
                 showarrow=False,
-                x=0, 
-                y=1.08, 
+                x=0.0, 
+                y=1.2, 
                 yref="paper", 
+                xref="paper",
+                xanchor="left", 
+                align="left",
+            ),
+            dict(
+                text="Spike Smoothing Std Dev:", 
+                showarrow=False,
+                x=0.3, 
+                y=1.2, 
+                yref="paper", 
+                xref="paper", 
+                xanchor="left", 
+                align="left"
+            ),
+            dict(
+                text="Rates Smoothing:", 
+                showarrow=False,
+                x=0.8, 
+                y=1.2, 
+                yref="paper", 
+                xref="paper",
+                xanchor="right",  
                 align="left"
             )
         ]
     )
 
     config = {'displayModeBar': False}
-    return fig.to_html(config=config)
+    return fig.to_html(config=config, full_html=False, include_plotlyjs='cdn')

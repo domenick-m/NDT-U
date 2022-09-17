@@ -38,12 +38,13 @@ config.train.overlap = 24 #
 config.train.lag = 40 # ms to lag kinematic data by 
 config.train.smth_std = 60 # ms std to smooth rates by when decoding
 
-config.train.batch_size = 512 # Number of samples to compute loss with
-config.train.epochs = 100 # Number of full passes through dataset
+config.train.batch_size = 256 # Number of samples to compute loss with
+config.train.e_batch_size = 4096 # Number of samples to compute loss with
+config.train.epochs = 10000 # Number of full passes through dataset
 
 config.train.val_interval = 10 # Epochs between running on the validation set
-config.train.cross_val = True # If True, run with K-Folds cross validation
-config.train.n_folds = 5 # Number of folds (K) to use with K-folds cv
+config.train.cross_val = False # If True, run with K-Folds cross validation
+config.train.n_folds = 2 # Number of folds (K) to use with K-folds cv
 
 config.train.sweep_enabled = False # Whether or not wandb hyperparameter sweep is enabled, if False running train.py will train a single model
 config.train.sweep_type = 'random' # ['grid', 'random'] Which wandb sweep type to use when sweep is enabled, grid is every combination of the sweep values, and random is random combinations of the sweep values
@@ -51,15 +52,15 @@ config.train.sweep_epochs = 9999 # Number of models that should be trained if sw
 
 config.train.early_stopping = True # Whether or not the model stops training due to low co-bps
 config.train.es_min_bps = 0.0 # The point at which a model will be early stopped if it's co-bps score falls below this
-config.train.es_chk_pnt = 0.5 # When should the model start checking if it should early stop, 0.5 = halfway through the total epochs it will starting checking if co-bps falls below es_min_bps
-config.train.es_patience = 5000
+config.train.es_chk_pnt = 0.75 # When should the model start checking if it should early stop, 0.5 = halfway through the total epochs it will starting checking if co-bps falls below es_min_bps
+config.train.es_patience = 3000
 
 config.train.init_lr = 0.01 # The initial learning rate to be used by the optimizer
 config.train.max_grad_norm = 200.0 # The maximum value a gradient can have before it is clipped, avoids exploding gradient
 config.train.optimizer = 'AdamW' # ['AdamW',] The optimizer to use, other may be added in setup.py
 config.train.weight_decay = 1.000e-7 # The weight decay value used by AdamW, kind of like L2 Reg but better
 config.train.scheduler = 'Cosine' # ['None', 'Cosine',] The scheduler to use on the learning rate, other may be added in setup.py
-config.train.warmup_steps = 1500 # Warmup steps used by Cosine scheduler, icreases lr to 1 in this many steps before it follows cosine decay
+config.train.warmup_steps = 100 # Warmup epcohs used by Cosine scheduler, icreases lr to 1 in this many epochs before it follows cosine decay
 
 config.train.mask_max_span = 5 # The max number of timesteps that can be masked in a row
 config.train.ramp_start = 1000 # Epoch when the number of timesteps being maksed in a row starts to increase
@@ -100,7 +101,8 @@ config.model.context_backward = 7 # How many timesteps in the past can a timeste
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.wandb = CN()
-config.wandb.log = True # Whether or not data is uploaded to wandb
+config.wandb.log = False # Whether or not data is uploaded to wandb
+config.wandb.entity = 'emory-bg2' # The wandb project the run should be stored in
 config.wandb.project = 'test' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 
@@ -113,4 +115,5 @@ config.wandb.silent = True # ['true', 'false'] If 'true' wandb does not print an
 config.wandb.sweep = CN()
 config.wandb.sweep.setup = CN()
 config.wandb.sweep.train = CN()
+config.wandb.sweep.train.warmup_steps = [1, 2, 3, 4, 5]
 config.wandb.sweep.model = CN()

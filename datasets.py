@@ -3,9 +3,11 @@
 #───────#
 import os
 import sys
+import copy
 import random
 import logging
 import requests
+import pandas as pd
 import os.path as osp
 #────#
 import h5py
@@ -16,6 +18,7 @@ from tqdm.auto import tqdm
 from torch.utils import data
 from nlb_tools import make_tensors
 from nlb_tools.nwb_interface import NWBDataset
+from sklearn.model_selection import KFold
 from nlb_tools.make_tensors import (
     save_to_h5,
     combine_h5,
@@ -79,9 +82,13 @@ def get_dataloaders(config, mode):
                                                   DataLoader. In 'none' this is
                                                   None.
     '''
-    data_path = f'{config["setup"]["data_dir"]}{config["setup"]["dataset"]}'
-    data_path += f'_{config["train"]["seq_len"]}_{config["train"]["overlap"]}'
-    data_path += f'_{config["train"]["lag"]}.h5'
+    data_path = '{0}{1}_{2}_{3}_{4}.h5'.format(
+        config["setup"]["data_dir"], 
+        config["setup"]["dataset"], 
+        config["train"]["seq_len"], 
+        config["train"]["overlap"], 
+        config["train"]["lag"]
+    )
 
     generator = torch.Generator()
     generator.manual_seed(config['setup']['seed'])
@@ -115,26 +122,48 @@ def get_dataloaders(config, mode):
 
         val_dataloader = torch.utils.data.DataLoader(
             torch.utils.data.Subset(train_data, val_indicies),
-            batch_size=config['train']['batch_size'],
+            batch_size=config['train']['e_batch_size'],
             shuffle=False
         )
 
         return train_dataloader, val_dataloader
+    
+    if mode == 'cross-val':
+        train_data = Dataset(config, data_path, 'train')
+
+        train_dataloader = train_data.get_dataloader(generator, shuffle=True)
+        fold_dataloaders = []
+
+        kf = KFold(
+            n_splits=config['train']['n_folds'], 
+            random_state=config['setup']['seed'], 
+            shuffle=True
+        )
+
+        for idx, (train_indicies, val_indicies) in enumerate(kf.split(train_data)):
+            tmp_train_dataloader = torch.utils.data.DataLoader(
+                torch.utils.data.Subset(train_data, train_indicies),
+                batch_size=config['train']['batch_size'],
+                generator=generator,
+                worker_init_fn=_init_fn,
+                shuffle=True
+            )
+
+            tmp_val_dataloader = torch.utils.data.DataLoader(
+                torch.utils.data.Subset(train_data, val_indicies),
+                batch_size=config['train']['e_batch_size'],
+                shuffle=False
+            )
+
+            fold_dataloaders.append((idx, tmp_train_dataloader, tmp_val_dataloader))
+
+        return train_dataloader, fold_dataloaders
     
     # elif mode == 'test':
     #     test_data = Dataset(config, data_path, 'test')
 
     #     test_dataloader = test_data.get_dataloader(generator, shuffle=False)
     #     return test_dataloader
-
-    # if mode == 'cross-val':
-    #     train_data = Dataset(config, data_path, 'train')
-    #     val_data = Dataset(config, data_path, 'val')
-
-    #     val_data.clip_val(train_data.spikes_heldin.max().item() + 3)
-    #     train_dataloader = train_data.get_dataloader(generator, shuffle=True)
-    #     val_dataloader = val_data.get_dataloader(generator, shuffle=False)
-    #     return train_dataloader, val_dataloader
 
     # elif mode == 'random':
     #     trainval_data = Dataset(config, data_path, 'trainval')
@@ -163,10 +192,10 @@ def get_dataloaders(config, mode):
 
 
 
-def chop_data(data, chopsize, overlap, lag_bins):
+def chop_data(data, chopsize, overlap, lag_bins, single_trail=False):
     ''' Chops data trial by trail (or segment by segment) into overlapping segments.'''
-    chopped_data = []
-    for trial in data:
+    
+    def chop_trial(trial):
         if lag_bins > 0:
             trial = trial[:-lag_bins, :]
         shape = (
@@ -179,17 +208,22 @@ def chop_data(data, chopsize, overlap, lag_bins):
             trial.strides[0],
             trial.strides[1],
         )
+        return np.lib.stride_tricks.as_strided(trial, shape=shape, strides=strides).copy().astype('f')
+    
+    if single_trail:
+        return chop_trial(np.array(data))
+    else:
+        chopped_data = []
 
-        chopped_trial = np.lib.stride_tricks.as_strided(trial, shape=shape, strides=strides).copy().astype('f')
-        chopped_data.append(chopped_trial)
+        for trial in data:
+            chopped_data.append(chop_trial(trial))
 
-    chopped_data = np.array(chopped_data)
-
-    return chopped_data.reshape((
-        chopped_data.shape[0] * chopped_data.shape[1], 
-        chopped_data.shape[2], 
-        chopped_data.shape[3]
-    ))
+        chopped_data = np.array(chopped_data)
+        return chopped_data.reshape((
+            chopped_data.shape[0] * chopped_data.shape[1], 
+            chopped_data.shape[2], 
+            chopped_data.shape[3]
+        ))
 
 
 class Dataset(data.Dataset):
@@ -260,9 +294,10 @@ class Dataset(data.Dataset):
 
     def get_dataloader(self, generator, shuffle=True):
         return data.DataLoader(self,
-            batch_size=(
-                self.config['train']['batch_size'] if self.mode == 'train' else 4096
-            ),
+            batch_size=self.config['train']['batch_size'],
+            # batch_size=(
+            #     self.config['train']['batch_size'] if self.mode == 'train' else 4096
+            # ),
             generator=generator,
             shuffle=shuffle)
 
@@ -296,7 +331,6 @@ def verify_dataset(config):
             config["train"]["overlap"],
             config["train"]["lag"]
         )
-
 
 def download_mc_rtt(data_dir):
     ''' Download datasets, combine train/test & prep data, delete old files.
@@ -345,10 +379,10 @@ def seg_arr(data):
     return np.transpose(np.array(tmp_list), (1, 2, 0))
 
 
-def create_h5_data(data_dir, dataset, seq_len, overlap, lag):
+def create_h5_data(data_dir, dataset_name, seq_len, overlap, lag):
     ''' Turn train/test '.nwb' files into a single .h5 file and save
     '''
-    filepath = f'{data_dir}{dataset}.nwb'
+    filepath = f'{data_dir}{dataset_name}.nwb'
 
     dataset_obj = NWBDataset(filepath) # NWB Object
     dataset_obj.resample(10)
@@ -365,14 +399,14 @@ def create_h5_data(data_dir, dataset, seq_len, overlap, lag):
     lagged_vel_segments = np.array([seg[lag_bins:] for seg in vel_segments])
     train_vel_segments, test_vel_segments = lagged_vel_segments[:3], np.expand_dims(lagged_vel_segments[3], 0)
 
-    train_vel_segments = chop_data(train_vel_segments, seq_len, overlap, lag_bins=0)[:, -1, :]
-    test_vel_segments = chop_data(test_vel_segments, seq_len, overlap, lag_bins=0)[:, -1, :]
-
     train_hi_segments = chop_data(hi_spike_segments[:3], seq_len, overlap, lag_bins) # (8097, 30, 98)
     train_ho_segments = chop_data(ho_spike_segments[:3], seq_len, overlap, lag_bins) # (8097, 30, 32)
 
-    test_hi_segments = chop_data(np.expand_dims(hi_spike_segments[3], 0), seq_len, overlap, lag_bins) # (16191, 30, 98)
-    test_ho_segments = chop_data(np.expand_dims(ho_spike_segments[3], 0), seq_len, overlap, lag_bins) # (16191, 30, 32)
+    test_hi_segments = chop_data(np.expand_dims(hi_spike_segments[3], 0), seq_len, seq_len - 1, lag_bins) # (16191, 30, 98)
+    test_ho_segments = chop_data(np.expand_dims(ho_spike_segments[3], 0), seq_len, seq_len - 1, lag_bins) # (16191, 30, 32)
+    
+    train_vel = chop_data(train_vel_segments, seq_len, overlap, lag_bins=0)[:, -1, :]
+    test_vel = chop_data(test_vel_segments, seq_len, overlap, lag_bins=0)[:, -1, :]
 
     kern_sd = int(round(30 / dataset_obj.bin_width))
     window_30ms = signal.gaussian(kern_sd * 6, kern_sd, sym=True)
@@ -395,11 +429,204 @@ def create_h5_data(data_dir, dataset, seq_len, overlap, lag):
     test_hi_50_smth_spikes = np.apply_along_axis(filt_50, 0, test_hi_segments[:, -1, :])
     test_ho_80_smth_spikes = np.apply_along_axis(filt_80, 0, test_ho_segments[:, -1, :])
     test_hi_80_smth_spikes = np.apply_along_axis(filt_80, 0, test_hi_segments[:, -1, :])
+
+    dataset_obj = NWBDataset(filepath)
+
+    has_change = dataset_obj.data.target_pos.fillna(-1000).diff(axis=0).any(axis=1) # filling NaNs with arbitrary scalar to treat as one block
+    change_nan = dataset_obj.data[has_change].isna().any(axis=1)
+    change_times = dataset_obj.data.index[has_change]
+    mask = (change_nan.index >= "00:08:06.900000")
+
+    def format_data(dataset, drop_mask):
+        dataset_new = copy.deepcopy(dataset)
+
+        start_times = change_times[:-1][~drop_mask]
+        end_times = change_times[1:][~drop_mask]
+        target_pos = dataset.data.target_pos.loc[start_times].to_numpy().tolist()
+        reach_dist = dataset.data.target_pos.loc[end_times - pd.Timedelta(1, 'ms')].to_numpy() - dataset.data.target_pos.loc[start_times - pd.Timedelta(1, 'ms')].to_numpy()
+        reach_angle = np.arctan2(reach_dist[:, 1], reach_dist[:, 0]) / np.pi * 180
+
+        dataset_new.trial_info = pd.DataFrame({
+            'trial_id': np.arange(len(start_times)),
+            'start_time': start_times,
+            'end_time': end_times,
+            'target_pos': target_pos,
+            'reach_dist_x': reach_dist[:, 0],
+            'reach_dist_y': reach_dist[:, 1],
+            'reach_angle': reach_angle,
+        })
+
+        dataset_new.resample(10)
+
+        speed = np.linalg.norm(dataset_new.data.finger_vel, axis=1)
+
+        dataset_new.data['speed_le'] = speed
+        peak_times = dataset_new.calculate_onset(
+            'speed_le', 
+            onset_threshold=0.075, 
+            peak_prominence=0.9,
+            peak_distance_s=0.9,
+            multipeak_threshold=0.9
+        )
+
+        dataset_new.data['speed_me'] = speed
+        peak_times = dataset_new.calculate_onset(
+            'speed_me', 
+            onset_threshold=0.075, 
+            peak_prominence=0.5,
+            peak_distance_s=0.125,
+            multipeak_threshold=0.5
+        )
+
+        dataset_new.data['speed_he'] = speed
+        peak_times = dataset_new.calculate_onset(
+            'speed_he', 
+            onset_threshold=0.075, 
+            peak_prominence=0.1,
+            peak_distance_s=0.1,
+            multipeak_threshold=0.2
+        )
+
+        return dataset_new
+
+    drop_mask_train = (change_nan | change_nan.shift(1, fill_value=True) | change_nan.shift(-1, fill_value=True) | mask)[:-1]
+    drop_mask_test = (change_nan | change_nan.shift(1, fill_value=True) | change_nan.shift(-1, fill_value=True) | ~mask)[:-1]
+
+    dataset_train = format_data(dataset_obj, drop_mask_train)
+    dataset_test = format_data(dataset_obj, drop_mask_test)
+
+    def run_trial(trial_data, dataset):
+        trial_hi, trial_ho, trial_ids, trial_vel, trial_idx = [], [], [], [], []
+        for tid, trial in trial_data.groupby('trial_id'):
+            trial_hi.append(chop_data(trial.spikes, seq_len, seq_len - 1, lag_bins, True))
+            trial_ho.append(chop_data(trial.heldout_spikes, seq_len, seq_len - 1, lag_bins, True))
+            trial_ids.append(tid)
+            trial_vel.append(trial.finger_vel)
+        idx = 0
+        for trial in trial_hi[:-1]:
+            idx += trial.shape[0]
+            trial_idx.append(idx)
+
+        trial_angles = []
+        for tid in np.unique(trial_ids):
+            trial_angles.append(dataset.trial_info[dataset.trial_info.trial_id == tid].reach_angle.item())
+        
+        return trial_hi, trial_ho, trial_ids, trial_vel, trial_idx, trial_angles
+
+    def run_trails(train_trial_data, test_trial_data):
+        train_res = run_trial(train_trial_data, dataset_train)
+        test_res = run_trial(test_trial_data, dataset_test)
+
+        return train_res, test_res
+
+    # All Trials
+    all_train_trial_data = dataset_train.make_trial_data(align_range=(-290, lag_bins), allow_nans=False, allow_overlap=True)
+    all_test_trial_data = dataset_test.make_trial_data(align_range=(-290, lag_bins), allow_nans=False, allow_overlap=True)
     
+    all_train_res, all_test_res = run_trails(all_train_trial_data, all_test_trial_data)
+
+    all_train_trial_hi = all_train_res[0]
+    all_train_trial_ho = all_train_res[1]
+    all_train_trial_ids = all_train_res[2]
+    all_train_trial_vel = all_train_res[3]
+    all_train_trial_idx = all_train_res[4]
+    all_train_trial_angles = all_train_res[5]
+
+    all_test_trial_hi = all_test_res[0]
+    all_test_trial_ho = all_test_res[1]
+    all_test_trial_ids = all_test_res[2]
+    all_test_trial_vel = all_test_res[3]
+    all_test_trial_idx = all_test_res[4]
+    all_test_trial_angles = all_test_res[5]
+
+    # LE Trials
+    le_train_trial_data = dataset_train.make_trial_data(align_field='speed_le_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
+    le_test_trial_data = dataset_test.make_trial_data(align_field='speed_le_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
+    
+    le_train_res, le_test_res = run_trails(le_train_trial_data, le_test_trial_data)
+
+    le_train_trial_hi = le_train_res[0]
+    le_train_trial_ho = le_train_res[1]
+    le_train_trial_ids = le_train_res[2]
+    le_train_trial_vel = le_train_res[3]
+    le_train_trial_idx = le_train_res[4]
+    le_train_trial_angles = le_train_res[5]
+
+    le_test_trial_hi = le_test_res[0]
+    le_test_trial_ho = le_test_res[1]
+    le_test_trial_ids = le_test_res[2]
+    le_test_trial_vel = le_test_res[3]
+    le_test_trial_idx = le_test_res[4]
+    le_test_trial_angles = le_test_res[5]
+
+    # ME Trials
+    me_train_trial_data = dataset_train.make_trial_data(align_field='speed_me_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
+    me_test_trial_data = dataset_test.make_trial_data(align_field='speed_me_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
+    
+    me_train_res, me_test_res = run_trails(me_train_trial_data, me_test_trial_data)
+
+    me_train_trial_hi = me_train_res[0]
+    me_train_trial_ho = me_train_res[1]
+    me_train_trial_ids = me_train_res[2]
+    me_train_trial_vel = me_train_res[3]
+    me_train_trial_idx = me_train_res[4]
+    me_train_trial_angles = me_train_res[5]
+
+    me_test_trial_hi = me_test_res[0]
+    me_test_trial_ho = me_test_res[1]
+    me_test_trial_ids = me_test_res[2]
+    me_test_trial_vel = me_test_res[3]
+    me_test_trial_idx = me_test_res[4]
+    me_test_trial_angles = me_test_res[5]
+
+    # HE Trials
+    he_train_trial_data = dataset_train.make_trial_data(align_field='speed_he_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
+    he_test_trial_data = dataset_test.make_trial_data(align_field='speed_he_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
+        
+    he_train_res, he_test_res = run_trails(he_train_trial_data, he_test_trial_data)
+
+    he_train_trial_hi = he_train_res[0]
+    he_train_trial_ho = he_train_res[1]
+    he_train_trial_ids = he_train_res[2]
+    he_train_trial_vel = he_train_res[3]
+    he_train_trial_idx = he_train_res[4]
+    he_train_trial_angles = he_train_res[5]
+
+    he_test_trial_hi = he_test_res[0]
+    he_test_trial_ho = he_test_res[1]
+    he_test_trial_ids = he_test_res[2]
+    he_test_trial_vel = he_test_res[3]
+    he_test_trial_idx = he_test_res[4]
+    he_test_trial_angles = he_test_res[5]
+
     train_dict = {
         'train_spikes_heldin': train_hi_segments,
         'train_spikes_heldout': train_ho_segments,
-        'train_vel_segments': train_vel_segments
+        'train_vel': train_vel,
+
+        'all_train_trial_hi': np.concatenate(all_train_trial_hi, axis=0),
+        'all_train_trial_ho': np.concatenate(all_train_trial_ho, axis=0),
+        'all_train_trial_vel': np.concatenate(all_train_trial_vel, axis=0),
+        'all_train_trial_idx': np.array(all_train_trial_idx),
+        'all_train_trial_angles': np.array(all_train_trial_angles),
+
+        'le_train_trial_hi': np.concatenate(le_train_trial_hi, axis=0),
+        'le_train_trial_ho': np.concatenate(le_train_trial_ho, axis=0),
+        'le_train_trial_vel': np.concatenate(le_train_trial_vel, axis=0),
+        'le_train_trial_idx': np.array(le_train_trial_idx),
+        'le_train_trial_angles': np.array(le_train_trial_angles),
+
+        'me_train_trial_hi': np.concatenate(me_train_trial_hi, axis=0),
+        'me_train_trial_ho': np.concatenate(me_train_trial_ho, axis=0),
+        'me_train_trial_vel': np.concatenate(me_train_trial_vel, axis=0),
+        'me_train_trial_idx': np.array(me_train_trial_idx),
+        'me_train_trial_angles': np.array(me_train_trial_angles),
+
+        'he_train_trial_hi': np.concatenate(he_train_trial_hi, axis=0),
+        'he_train_trial_ho': np.concatenate(he_train_trial_ho, axis=0),
+        'he_train_trial_vel': np.concatenate(he_train_trial_vel, axis=0),
+        'he_train_trial_idx': np.array(he_train_trial_idx),
+        'he_train_trial_angles': np.array(he_train_trial_angles),
     }
 
     test_dict = {
@@ -411,11 +638,35 @@ def create_h5_data(data_dir, dataset, seq_len, overlap, lag):
         'test_hi_50_smth_spikes': test_hi_50_smth_spikes,
         'test_ho_80_smth_spikes': test_ho_80_smth_spikes,
         'test_hi_80_smth_spikes': test_hi_80_smth_spikes,
-        'test_vel_segments': test_vel_segments
+        'test_vel': test_vel,
+
+        'all_test_trial_hi': np.concatenate(all_test_trial_hi, axis=0),
+        'all_test_trial_ho': np.concatenate(all_test_trial_ho, axis=0),        
+        'all_test_trial_vel': np.concatenate(all_test_trial_vel, axis=0),
+        'all_test_trial_idx': np.array(all_test_trial_idx),
+        'all_test_trial_angles': np.array(all_test_trial_angles), 
+
+        'le_test_trial_hi': np.concatenate(le_test_trial_hi, axis=0),
+        'le_test_trial_ho': np.concatenate(le_test_trial_ho, axis=0),        
+        'le_test_trial_vel': np.concatenate(le_test_trial_vel, axis=0),
+        'le_test_trial_idx': np.array(le_test_trial_idx),
+        'le_test_trial_angles': np.array(le_test_trial_angles), 
+
+        'me_test_trial_hi': np.concatenate(me_test_trial_hi, axis=0),
+        'me_test_trial_ho': np.concatenate(me_test_trial_ho, axis=0),        
+        'me_test_trial_vel': np.concatenate(me_test_trial_vel, axis=0),
+        'me_test_trial_idx': np.array(me_test_trial_idx),
+        'me_test_trial_angles': np.array(me_test_trial_angles), 
+
+        'he_test_trial_hi': np.concatenate(he_test_trial_hi, axis=0),
+        'he_test_trial_ho': np.concatenate(he_test_trial_ho, axis=0),        
+        'he_test_trial_vel': np.concatenate(he_test_trial_vel, axis=0),
+        'he_test_trial_idx': np.array(he_test_trial_idx),
+        'he_test_trial_angles': np.array(he_test_trial_angles), 
     }
 
     h5_file = {**train_dict, **test_dict}
-    filename = f'{data_dir}{dataset}_{seq_len}_{overlap}_{lag}.h5'
+    filename = f'{data_dir}{dataset_name}_{seq_len}_{overlap}_{lag}.h5'
 
     # Remove older version if it exists
     if osp.isfile(filename): os.remove(filename)

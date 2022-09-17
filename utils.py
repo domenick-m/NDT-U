@@ -35,6 +35,18 @@ from def_config import config
    ║                              CONFIG UTILS                              ║
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
+def get_run_name(config, name):
+    if name is None: # this means nothing was passed to name CLI arg
+        log_local = config['wandb']['log_local'] and not config['wandb']['log']
+        # If the reports need to be logged it needs a name
+        name = wandb.run.name if config['wandb']['log'] else (
+            input('\nEnter an ID to save the model with: ')) if (
+                config['setup']['save_model'] or log_local
+            ) else 'unnamed'
+    elif config['wandb']['log']: # this means name was passed to CLI args
+        wandb.run.name = name
+    
+    return name
 
 def get_config(arg_dict):
     ''' Gets the default config and optionally overwites with values from the
@@ -102,7 +114,7 @@ def get_config_dict(cfg=None):
     config_dict = cfg_node_to_dict(config_copy if not cfg else cfg)
     return config_dict
 
-def get_wandb_config(wandb):
+def get_wandb_config():
     ''' Overwites the values in the wandb config with those from the wandb sweep
     config. Used when training with a wandb sweep.
 
@@ -146,6 +158,8 @@ def reset_wandb_env():
         "WANDB_PROJECT",
         "WANDB_ENTITY",
         "WANDB_API_KEY",
+        # "WANDB_SWEEP_ID",
+        # "WANDB_SWEEP_PARAM_PATH"
     }
     for k, v in os.environ.items():
         if k.startswith("WANDB_") and k not in exclude:
@@ -215,7 +229,6 @@ def set_sweep_config(config, arg_dict):
     sweep_id = wandb.sweep(sweep_config, project=config['wandb']['project'])
     path = './wandb/sweep-'+sweep_id+'/'
     os.makedirs(path)
-    config['wandb']['alt_wandb_dirs'] = []
     with open(path+'/config.yaml', 'w') as yamlfile:
         data = yaml.dump(cfg_node_to_dict(config), yamlfile)
     return sweep_id
@@ -247,12 +260,11 @@ def setup_runs_folder(config, model, mode):
         print('\n RENAMING TO:', new_name+'\n')
         model.name = new_name
     os.makedirs(path)
-    config['wandb']['alt_wandb_dirs'] = []
     with open(path+'/config.yaml', 'w') as yamlfile:
         data = yaml.dump(cfg_node_to_dict(config), yamlfile)
     return path+'/'
 
-def delete_wandb_run_folder(wandb):
+def wandb_cleanup():
     '''Deletes the run folder after it's been uploaded.
 
     Args:
@@ -318,7 +330,8 @@ class ScaleNorm(nn.Module):
         return x * norm
 
 
-def get_scheduler(optimizer, config, dataloader_size):
+def get_scheduler(optimizer, config):
+# def get_scheduler(optimizer, config, dataloader_size):
     ''' Gets the scheduler.
 
     Args:
@@ -326,11 +339,19 @@ def get_scheduler(optimizer, config, dataloader_size):
         config (dict): A config object.
     '''
     scheduler = None
-    total = dataloader_size * config['train']['epochs']
+    # total = dataloader_size * config['train']['epochs']
     if config['train']['scheduler'] == 'Cosine':
-        scheduler = WarmupCosineSchedule(optimizer,
+        scheduler = WarmupCosineSchedule(
+            optimizer,
             warmup_steps=config['train']['warmup_steps'],
-            t_total=total)
+            t_total=config['train']['epochs']
+        )
+    # scheduler = None
+    # total = dataloader_size * config['train']['epochs']
+    # if config['train']['scheduler'] == 'Cosine':
+    #     scheduler = WarmupCosineSchedule(optimizer,
+    #         warmup_steps=config['train']['warmup_steps'],
+    #         t_total=total)
     # elif config['train']['scheduler'] == 'new scheduler':
     #     scheduler = new scheduler(optimizer,)
     return scheduler
@@ -447,9 +468,11 @@ def upload_print_results(config, result_dict, progress_bar, save_path):
         save_path (str): Where to save locally.
     '''
     epoch = '[Epoch: '+str(result_dict['epoch'])+']'
-    loss = '[val loss: '+"{:.4f}".format(result_dict['val_loss'])+']'
-    cobps = '[val co-bps: '+"{:.3f}".format(result_dict['co_bps'])+']'
-    report = epoch + '   ' + loss + '   ' + cobps + '   '
+    heldin_loss = f'[val heldin loss: {result_dict["heldin_loss"]:.4f}]'
+    heldout_loss = f'[val heldin loss: {result_dict["heldout_loss"]:.4f}]'
+    cobps = f'[val co-bps: {result_dict["co_bps"]:.3f}]'
+    ltcobps = f'[val lt co-bps: {result_dict["lt_co_bps"]:.3f}]'
+    report = epoch + '   ' + heldin_loss + '   ' + heldout_loss + '   ' + cobps + '   ' + ltcobps
     progress_bar.display(msg=report, pos=0)
 
     if config['wandb']['log']:
@@ -499,12 +522,17 @@ def print_train_configs(config, args):
         setup_box[0], setup_box[1], setup_box[2],
         format_config('dataset', config.setup.dataset),
         format_config('seed', config.setup.seed),
+        format_config('gpu_idx', config.setup.gpu_idx),
+        format_config('agent_gpus', config.setup.agent_gpus),
         format_config('log_eps', config.setup.log_eps),
         format_config('save_model', config.setup.save_model),
         format_config('save_min_bps', config.setup.save_min_bps),
         '', wandb_box[0], wandb_box[1], wandb_box[2],
+        format_config('entity', config.wandb.entity),
         format_config('project', config.wandb.project),
+        format_config('sweep_name', config.wandb.sweep_name),
         format_config('log', config.wandb.log),
+        format_config('silent', config.wandb.silent),
         format_config('log_local', config.wandb.log_local),
         format_config('log_freq', config.wandb.log_freq)
     ]
@@ -512,26 +540,35 @@ def print_train_configs(config, args):
         model_box[0], model_box[1], model_box[2],
         format_config('n_layers', config.model.n_layers),
         format_config('n_heads', config.model.n_heads),
+        format_config('undivided_attn', config.model.undivided_attn),
         format_config('hidden_size', config.model.hidden_size),
-        format_config('dropout', config.model.dropout),
-        format_config('dropout_rates', config.model.dropout_rates),
-        format_config('dropout_embedding', config.model.dropout_embedding),
-        format_config('dropout_attention', config.model.dropout_attention),
+        format_config('norm', config.model.norm),
+        format_config('normal_init', config.model.normal_init),
         format_config('activation', config.model.activation),
         format_config('initrange', config.model.initrange),
         format_config('context_forward', config.model.context_forward),
         format_config('context_backward', config.model.context_backward),
-        format_config('loss_ratio', config.model.loss_ratio),
+        '', format_config('dropout', config.model.dropout),
+        format_config('dropout_rates', config.model.dropout_rates),
+        format_config('dropout_embedding', config.model.dropout_embedding),
+        format_config('dropout_attention', config.model.dropout_attention),
+        '', format_config('loss_ratio', config.model.loss_ratio),
         format_config('mask_ratio', config.model.mask_ratio),
-        format_config('random_ratio', config.model.random_ratio)
+        format_config('random_ratio', config.model.random_ratio),
     ]
     train_list = [
         train_box[0], train_box[1], train_box[2],
         format_config('batch_size', config.train.batch_size),
+        format_config('e_batch_size', config.train.e_batch_size),
         format_config('epochs', config.train.epochs),
         format_config('seq_len', config.train.seq_len),
+        format_config('overlap', config.train.overlap),
+        format_config('lag', config.train.lag),
+        format_config('cross_val', config.train.cross_val),
+        format_config('n_folds', config.train.n_folds),
         format_config('early_stopping', config.train.early_stopping),
         format_config('es_min_bps', config.train.es_min_bps),
+        format_config('es_patience', config.train.es_patience),
         format_config('optimizer', config.train.optimizer),
         format_config('scheduler', config.train.scheduler),
         format_config('warmup_steps', config.train.warmup_steps),
