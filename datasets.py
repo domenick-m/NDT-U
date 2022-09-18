@@ -106,18 +106,23 @@ def get_dataloaders(config, mode):
         train_data = Dataset(config, data_path, 'train')
 
         n_samples = len(train_data)
-        split_index = int(0.2 * n_samples)
-        shuffled_indicies = torch.randperm(n_samples, generator=generator)
+        split_index = int(0.8 * n_samples)
 
-        train_indicies = list(shuffled_indicies[:split_index])
-        val_indicies = list(shuffled_indicies[split_index:])
+        # Dataset is last 20% of training data
+        train_indicies = [i for i in range(0, split_index)]
+        val_indicies = [i for i in range(split_index, n_samples)]
+
+        # shuffled_indicies = torch.randperm(n_samples, generator=generator)
+        # train_indicies = list(shuffled_indicies[:split_index])
+        # val_indicies = list(shuffled_indicies[split_index:])
+
 
         train_dataloader = torch.utils.data.DataLoader(
             torch.utils.data.Subset(train_data, train_indicies),
             batch_size=config['train']['batch_size'],
             generator=generator,
             worker_init_fn=_init_fn,
-            shuffle=True
+            shuffle=True,
         )
 
         val_dataloader = torch.utils.data.DataLoader(
@@ -136,8 +141,9 @@ def get_dataloaders(config, mode):
 
         kf = KFold(
             n_splits=config['train']['n_folds'], 
-            random_state=config['setup']['seed'], 
-            shuffle=True
+            shuffle=False
+            # random_state=config['setup']['seed'], 
+            # shuffle=True
         )
 
         for idx, (train_indicies, val_indicies) in enumerate(kf.split(train_data)):
@@ -406,7 +412,7 @@ def create_h5_data(data_dir, dataset_name, seq_len, overlap, lag):
     test_ho_segments = chop_data(np.expand_dims(ho_spike_segments[3], 0), seq_len, seq_len - 1, lag_bins) # (16191, 30, 32)
     
     train_vel = chop_data(train_vel_segments, seq_len, overlap, lag_bins=0)[:, -1, :]
-    test_vel = chop_data(test_vel_segments, seq_len, overlap, lag_bins=0)[:, -1, :]
+    test_vel = chop_data(test_vel_segments, seq_len, seq_len - 1, lag_bins=0)[:, -1, :]
 
     kern_sd = int(round(30 / dataset_obj.bin_width))
     window_30ms = signal.gaussian(kern_sd * 6, kern_sd, sym=True)
@@ -501,7 +507,7 @@ def create_h5_data(data_dir, dataset_name, seq_len, overlap, lag):
             trial_hi.append(chop_data(trial.spikes, seq_len, seq_len - 1, lag_bins, True))
             trial_ho.append(chop_data(trial.heldout_spikes, seq_len, seq_len - 1, lag_bins, True))
             trial_ids.append(tid)
-            trial_vel.append(trial.finger_vel)
+            trial_vel.append(trial.finger_vel.to_numpy()[lag_bins + seq_len - 1:])
         idx = 0
         for trial in trial_hi[:-1]:
             idx += trial.shape[0]
@@ -513,17 +519,17 @@ def create_h5_data(data_dir, dataset_name, seq_len, overlap, lag):
         
         return trial_hi, trial_ho, trial_ids, trial_vel, trial_idx, trial_angles
 
-    def run_trails(train_trial_data, test_trial_data):
+    def run_trials(train_trial_data, test_trial_data):
         train_res = run_trial(train_trial_data, dataset_train)
         test_res = run_trial(test_trial_data, dataset_test)
 
         return train_res, test_res
 
     # All Trials
-    all_train_trial_data = dataset_train.make_trial_data(align_range=(-290, lag_bins), allow_nans=False, allow_overlap=True)
-    all_test_trial_data = dataset_test.make_trial_data(align_range=(-290, lag_bins), allow_nans=False, allow_overlap=True)
+    all_train_trial_data = dataset_train.make_trial_data(align_range=(-290, lag), allow_nans=False, allow_overlap=True)
+    all_test_trial_data = dataset_test.make_trial_data(align_range=(-290, lag), allow_nans=False, allow_overlap=True)
     
-    all_train_res, all_test_res = run_trails(all_train_trial_data, all_test_trial_data)
+    all_train_res, all_test_res = run_trials(all_train_trial_data, all_test_trial_data)
 
     all_train_trial_hi = all_train_res[0]
     all_train_trial_ho = all_train_res[1]
@@ -540,10 +546,10 @@ def create_h5_data(data_dir, dataset_name, seq_len, overlap, lag):
     all_test_trial_angles = all_test_res[5]
 
     # LE Trials
-    le_train_trial_data = dataset_train.make_trial_data(align_field='speed_le_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
-    le_test_trial_data = dataset_test.make_trial_data(align_field='speed_le_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
+    le_train_trial_data = dataset_train.make_trial_data(align_field='speed_le_onset', align_range=(-290, 420 + lag), allow_nans=False, allow_overlap=True)
+    le_test_trial_data = dataset_test.make_trial_data(align_field='speed_le_onset', align_range=(-290, 420 + lag), allow_nans=False, allow_overlap=True)
     
-    le_train_res, le_test_res = run_trails(le_train_trial_data, le_test_trial_data)
+    le_train_res, le_test_res = run_trials(le_train_trial_data, le_test_trial_data)
 
     le_train_trial_hi = le_train_res[0]
     le_train_trial_ho = le_train_res[1]
@@ -560,10 +566,10 @@ def create_h5_data(data_dir, dataset_name, seq_len, overlap, lag):
     le_test_trial_angles = le_test_res[5]
 
     # ME Trials
-    me_train_trial_data = dataset_train.make_trial_data(align_field='speed_me_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
-    me_test_trial_data = dataset_test.make_trial_data(align_field='speed_me_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
+    me_train_trial_data = dataset_train.make_trial_data(align_field='speed_me_onset', align_range=(-290, 420 + lag), allow_nans=False, allow_overlap=True)
+    me_test_trial_data = dataset_test.make_trial_data(align_field='speed_me_onset', align_range=(-290, 420 + lag), allow_nans=False, allow_overlap=True)
     
-    me_train_res, me_test_res = run_trails(me_train_trial_data, me_test_trial_data)
+    me_train_res, me_test_res = run_trials(me_train_trial_data, me_test_trial_data)
 
     me_train_trial_hi = me_train_res[0]
     me_train_trial_ho = me_train_res[1]
@@ -580,10 +586,10 @@ def create_h5_data(data_dir, dataset_name, seq_len, overlap, lag):
     me_test_trial_angles = me_test_res[5]
 
     # HE Trials
-    he_train_trial_data = dataset_train.make_trial_data(align_field='speed_he_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
-    he_test_trial_data = dataset_test.make_trial_data(align_field='speed_he_onset', align_range=(-290, 425 + lag_bins), allow_nans=False, allow_overlap=True)
+    he_train_trial_data = dataset_train.make_trial_data(align_field='speed_he_onset', align_range=(-290, 420 + lag), allow_nans=False, allow_overlap=True)
+    he_test_trial_data = dataset_test.make_trial_data(align_field='speed_he_onset', align_range=(-290, 420 + lag), allow_nans=False, allow_overlap=True)
         
-    he_train_res, he_test_res = run_trails(he_train_trial_data, he_test_trial_data)
+    he_train_res, he_test_res = run_trials(he_train_trial_data, he_test_trial_data)
 
     he_train_trial_hi = he_train_res[0]
     he_train_trial_ho = he_train_res[1]

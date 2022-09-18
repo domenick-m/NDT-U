@@ -43,7 +43,19 @@ def get_run_name(config, name):
             input('\nEnter an ID to save the model with: ')) if (
                 config['setup']['save_model'] or log_local
             ) else 'unnamed'
-    elif config['wandb']['log']: # this means name was passed to CLI args
+    path = f'{config["setup"]["save_dir"]}train/{name}'
+    if os.path.isdir(path):
+        file_count = 1
+        tmp_path = path
+        while os.path.isdir(tmp_path):
+            tmp_path = path+'_'+str(file_count)
+            file_count += 1
+        path = tmp_path
+        name+=f'_{file_count-1}'
+        print(f'\n RENAMING TO: {name}\n')
+
+        
+    if config['wandb']['log']: # this means name was passed to CLI args
         wandb.run.name = name
     
     return name
@@ -257,11 +269,13 @@ def setup_runs_folder(config, model, mode):
             file_count += 1
         path = tmp_path
         new_name = model.name+'_'+str(file_count-1)
-        print('\n RENAMING TO:', new_name+'\n')
         model.name = new_name
     os.makedirs(path)
     with open(path+'/config.yaml', 'w') as yamlfile:
         data = yaml.dump(cfg_node_to_dict(config), yamlfile)
+    if config['wandb']['log']:
+        with open(path+'/wandb_run_id.txt', 'w') as f:
+            f.write(wandb.run.id)
     return path+'/'
 
 def wandb_cleanup():
@@ -457,7 +471,7 @@ def print_run_get_prog_bar(config, model, wandb=None):
         bar_format=bar_format
     )
 
-def upload_print_results(config, result_dict, progress_bar, save_path):
+def upload_print_results(config, result_dict, progress_bar, save_path, fold):
     '''Either uploads to wandb or stores locally. Also shows the report on the
     progress bar.
 
@@ -469,7 +483,7 @@ def upload_print_results(config, result_dict, progress_bar, save_path):
     '''
     epoch = '[Epoch: '+str(result_dict['epoch'])+']'
     heldin_loss = f'[val heldin loss: {result_dict["heldin_loss"]:.4f}]'
-    heldout_loss = f'[val heldin loss: {result_dict["heldout_loss"]:.4f}]'
+    heldout_loss = f'[val heldout loss: {result_dict["heldout_loss"]:.4f}]'
     cobps = f'[val co-bps: {result_dict["co_bps"]:.3f}]'
     ltcobps = f'[val lt co-bps: {result_dict["lt_co_bps"]:.3f}]'
     report = epoch + '   ' + heldin_loss + '   ' + heldout_loss + '   ' + cobps + '   ' + ltcobps
@@ -477,12 +491,13 @@ def upload_print_results(config, result_dict, progress_bar, save_path):
 
     if config['wandb']['log']:
         wandb.log({
-            'val loss': result_dict['val_loss'],
-            'val heldout loss': result_dict['heldout_loss'],
-            'val co-bps': result_dict['co_bps'],
-            'val lt-co-bps': result_dict['lt_co_bps'],
-            'val heldin loss': result_dict['heldin_loss'],
-        }, step=result_dict['epoch'])
+            f'val loss{fold}': result_dict['val_loss'],
+            f'val heldout loss{fold}': result_dict['heldout_loss'],
+            f'val co-bps{fold}': result_dict['co_bps'],
+            f'val lt-co-bps{fold}': result_dict['lt_co_bps'],
+            f'val heldin loss{fold}': result_dict['heldin_loss'],
+            't_epochs':result_dict['epoch']
+        })
     elif config['wandb']['log_local']:
         with open(save_path+'report_log.txt', 'a') as f:
             f.write('\n'+report)
@@ -534,7 +549,6 @@ def print_train_configs(config, args):
         format_config('log', config.wandb.log),
         format_config('silent', config.wandb.silent),
         format_config('log_local', config.wandb.log_local),
-        format_config('log_freq', config.wandb.log_freq)
     ]
     model_list = [
         model_box[0], model_box[1], model_box[2],
@@ -564,7 +578,7 @@ def print_train_configs(config, args):
         format_config('seq_len', config.train.seq_len),
         format_config('overlap', config.train.overlap),
         format_config('lag', config.train.lag),
-        format_config('cross_val', config.train.cross_val),
+        format_config('val_type', config.train.val_type),
         format_config('n_folds', config.train.n_folds),
         format_config('early_stopping', config.train.early_stopping),
         format_config('es_min_bps', config.train.es_min_bps),

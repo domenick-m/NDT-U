@@ -23,7 +23,7 @@ config.setup.data_dir = 'data/' # Where each datasets .h5 file is stored
 config.setup.save_dir = 'runs/' # Where the train and test output data should be stored
 
 config.setup.save_model = True # If True, save the best (co-bps on val set) model and the model after fully training
-config.setup.save_min_bps = 0.0 # Best model will not be saved until it reaches this point, set high to avoid saving too often
+config.setup.save_min_bps = -100.0 # Best model will not be saved until it reaches this point, set high to avoid saving too often
 config.setup.log_eps = 1e-7 # The epsilon to be added to log, should be really small
 
 '''
@@ -38,13 +38,13 @@ config.train.overlap = 24 #
 config.train.lag = 40 # ms to lag kinematic data by 
 config.train.smth_std = 60 # ms std to smooth rates by when decoding
 
-config.train.batch_size = 256 # Number of samples to compute loss with
-config.train.e_batch_size = 4096 # Number of samples to compute loss with
+config.train.batch_size = 512 # Number of samples to compute loss with
+config.train.e_batch_size = 1024 # Number of samples to compute loss with
 config.train.epochs = 10000 # Number of full passes through dataset
 
-config.train.val_interval = 10 # Epochs between running on the validation set
-config.train.cross_val = False # If True, run with K-Folds cross validation
-config.train.n_folds = 2 # Number of folds (K) to use with K-folds cv
+config.train.val_interval = 20 # Epochs between running on the validation set
+config.train.val_type = 'cross_val' # ['random', 'last', 'cross_val']
+config.train.n_folds = 5 # Number of folds (K) to use with K-folds cv
 
 config.train.sweep_enabled = False # Whether or not wandb hyperparameter sweep is enabled, if False running train.py will train a single model
 config.train.sweep_type = 'random' # ['grid', 'random'] Which wandb sweep type to use when sweep is enabled, grid is every combination of the sweep values, and random is random combinations of the sweep values
@@ -53,7 +53,7 @@ config.train.sweep_epochs = 9999 # Number of models that should be trained if sw
 config.train.early_stopping = True # Whether or not the model stops training due to low co-bps
 config.train.es_min_bps = 0.0 # The point at which a model will be early stopped if it's co-bps score falls below this
 config.train.es_chk_pnt = 0.75 # When should the model start checking if it should early stop, 0.5 = halfway through the total epochs it will starting checking if co-bps falls below es_min_bps
-config.train.es_patience = 3000
+config.train.es_patience = 150
 
 config.train.init_lr = 0.01 # The initial learning rate to be used by the optimizer
 config.train.max_grad_norm = 200.0 # The maximum value a gradient can have before it is clipped, avoids exploding gradient
@@ -101,12 +101,10 @@ config.model.context_backward = 7 # How many timesteps in the past can a timeste
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.wandb = CN()
-config.wandb.log = False # Whether or not data is uploaded to wandb
+config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.entity = 'emory-bg2' # The wandb project the run should be stored in
-config.wandb.project = 'test' # The wandb project the run should be stored in
+config.wandb.project = 'kfold-sweep' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
-
-config.wandb.log_freq = 250 # Epochs between each gradient log of the model by wandb
 config.wandb.log_local = True # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt'
 config.wandb.silent = True # ['true', 'false'] If 'true' wandb does not print anything
 '''
@@ -115,5 +113,11 @@ config.wandb.silent = True # ['true', 'false'] If 'true' wandb does not print an
 config.wandb.sweep = CN()
 config.wandb.sweep.setup = CN()
 config.wandb.sweep.train = CN()
-config.wandb.sweep.train.warmup_steps = [1, 2, 3, 4, 5]
+config.wandb.sweep.train.warmup_steps = [10, 50, 100, 250, 500, 1000, 2500]
+config.wandb.sweep.train.weight_decay = [1.000e-5, 1.000e-6, 1.000e-7, 1.000e-8, 1.000e-9]
+config.wandb.sweep.train.init_lr = [0.015, 0.01, 0.005]
 config.wandb.sweep.model = CN()
+config.wandb.sweep.model.undivided_attn = [True, False]
+config.wandb.sweep.model.hidden_size = [256, 200, 128, 98, 64]
+config.wandb.sweep.model.context_forward = [1, 3, 5]
+config.wandb.sweep.model.context_backward = [3, 5, 7, 12, 15]

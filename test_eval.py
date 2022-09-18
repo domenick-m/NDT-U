@@ -1,5 +1,6 @@
 import os
 import sys
+import copy
 import h5py
 import torch
 import torch.nn as nn
@@ -15,8 +16,8 @@ from scipy.linalg import LinAlgWarning
 # from create_local_data import make_test_data
 from nlb_tools.make_tensors import h5_to_dict
 # from nlb_tools.nwb_interface import NWBDataset
-# from nlb_tools.evaluation import bits_per_spike
-# from sklearn.model_selection import GridSearchCV
+from nlb_tools.evaluation import bits_per_spike
+from sklearn.model_selection import GridSearchCV
 # from configs.default_config import get_config_from_file
 from plot_utils.plot_rates_vs_spks_indv import plot_rates_vs_spks_indv
 # from plot_utils.plot_rates_vs_spks_all import plot_rates_vs_spks_all
@@ -43,12 +44,13 @@ def smooth_spikes(data, gauss_width, bin_width, causal):
     return np.apply_along_axis(filt, 0, data)
 
 def norm_rates(rates):
+    rates_new = copy.deepcopy(rates)
     for ch in range(rates.shape[1]):
         mean = rates[:, ch].mean()
         std = rates[:, ch].std()
-        rates[:, ch] -= mean
-        rates[:, ch] /= std
-    return rates
+        rates_new[:, ch] -= mean
+        rates_new[:, ch] /= std
+    return rates_new
 
 def run_pca(normed_rates):
     tr_list = []
@@ -78,10 +80,10 @@ def eval_mc_rtt(config, model, local_save):
         trial_ac_smth_rates, normed_ac_smth_rates = [], []
 
         indicies = h5dict[trial_idx]
-        spikes = np.split(h5dict[trial_hi], indicies, axis=0)
-        heldout_spikes = np.split(h5dict[trial_ho], indicies, axis=0)
+        spikes_list = np.split(h5dict[trial_hi], indicies, axis=0)
+        heldout_spikes_list = np.split(h5dict[trial_ho], indicies, axis=0)
 
-        for spikes, heldout_spikes in zip(spikes, heldout_spikes):
+        for spikes, heldout_spikes in zip(spikes_list, heldout_spikes_list):
             spikes = torch.Tensor(spikes).to(device)
             heldout_spikes = torch.Tensor(heldout_spikes).to(device)
             spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes)], -1)
@@ -112,213 +114,267 @@ def eval_mc_rtt(config, model, local_save):
             trial_ac_smth_pcs
         )
 
-    # Full Test Dataset
+    ### DATA ###
+
+    ## Full Train Dataset
+    spikes = torch.Tensor(h5dict['train_spikes_heldin']).to(device)
+    heldout_spikes = torch.Tensor(h5dict['train_spikes_heldout']).to(device)
+    with torch.no_grad():
+        spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes)], -1)
+        train_rates = model(spikes)[:, -1, :].exp().cpu().numpy()
+    del spikes
+    del heldout_spikes
+    acaus_smth_train_rates = smooth_spikes(train_rates, config['train']['smth_std'], 10, causal=False)
+    caus_smth_train_rates = smooth_spikes(train_rates, config['train']['smth_std'], 10, causal=True)
+
+    ## Full Test Dataset
     spikes = torch.Tensor(h5dict['test_spikes_heldin']).to(device)
     heldout_spikes = torch.Tensor(h5dict['test_spikes_heldout']).to(device)
-
     with torch.no_grad():
         spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes)], -1)
         test_rates = model(spikes)[:, -1, :].exp().cpu().numpy()
-
     del spikes
     del heldout_spikes
-
     acaus_smth_test_rates = smooth_spikes(test_rates, config['train']['smth_std'], 10, causal=False)
     caus_smth_test_rates = smooth_spikes(test_rates, config['train']['smth_std'], 10, causal=True)
-    #───────#
 
-
-    # All Train Trials
-    
+    ##All Train Trials
     res_tuple = run_exclusion_trials('all_train_trial_idx', 'all_train_trial_hi', 'all_train_trial_ho')
-
     all_train_trial_rates = res_tuple[0]
     all_train_trial_c_smth_rates = res_tuple[1]
     all_train_trial_ac_smth_rates = res_tuple[2]
-
     all_train_trial_pcs = res_tuple[3]
     all_train_trial_c_smth_pcs = res_tuple[4]
     all_train_trial_ac_smth_pcs = res_tuple[5]
     
-    #───────#
-
     # All Test Trials
-
     res_tuple = run_exclusion_trials('all_test_trial_idx', 'all_test_trial_hi', 'all_test_trial_ho')
-
     all_test_trial_rates = res_tuple[0]
     all_test_trial_c_smth_rates = res_tuple[1]
     all_test_trial_ac_smth_rates = res_tuple[2]
-
     all_test_trial_pcs = res_tuple[3]
     all_test_trial_c_smth_pcs = res_tuple[4]
     all_test_trial_ac_smth_pcs = res_tuple[5]
-    #───────#
 
-    # LE Train Trials
-
+    ## LE Train Trials
     res_tuple = run_exclusion_trials('le_train_trial_idx', 'le_train_trial_hi', 'le_train_trial_ho')
-
     le_train_trial_rates = res_tuple[0]
     le_train_trial_c_smth_rates = res_tuple[1]
     le_train_trial_ac_smth_rates = res_tuple[2]
-
     le_train_trial_pcs = res_tuple[3]
     le_train_trial_c_smth_pcs = res_tuple[4]
     le_train_trial_ac_smth_pcs = res_tuple[5]
-    #───────#
 
     # LE Test Trials
-
     res_tuple = run_exclusion_trials('le_test_trial_idx', 'le_test_trial_hi', 'le_test_trial_ho')
-
     le_test_trial_rates = res_tuple[0]
     le_test_trial_c_smth_rates = res_tuple[1]
     le_test_trial_ac_smth_rates = res_tuple[2]
-
     le_test_trial_pcs = res_tuple[3]
     le_test_trial_c_smth_pcs = res_tuple[4]
     le_test_trial_ac_smth_pcs = res_tuple[5]
-    #───────#
 
-    # ME Train Trials
-
+    ## ME Train Trials
     res_tuple = run_exclusion_trials('me_train_trial_idx', 'me_train_trial_hi', 'me_train_trial_ho')
-
     me_train_trial_rates = res_tuple[0]
     me_train_trial_c_smth_rates = res_tuple[1]
     me_train_trial_ac_smth_rates = res_tuple[2]
-
     me_train_trial_pcs = res_tuple[3]
     me_train_trial_c_smth_pcs = res_tuple[4]
     me_train_trial_ac_smth_pcs = res_tuple[5]
-    #───────#
 
     # ME Test Trials
-
     res_tuple = run_exclusion_trials('me_test_trial_idx', 'me_test_trial_hi', 'me_test_trial_ho')
-
     me_test_trial_rates = res_tuple[0]
     me_test_trial_c_smth_rates = res_tuple[1]
     me_test_trial_ac_smth_rates = res_tuple[2]
-
     me_test_trial_pcs = res_tuple[3]
     me_test_trial_c_smth_pcs = res_tuple[4]
     me_test_trial_ac_smth_pcs = res_tuple[5]
-    #───────#
 
-    # HE Train Trials
+    ## HE Train Trials
     res_tuple = run_exclusion_trials('he_train_trial_idx', 'he_train_trial_hi', 'he_train_trial_ho')
-
     he_train_trial_rates = res_tuple[0]
     he_train_trial_c_smth_rates = res_tuple[1]
     he_train_trial_ac_smth_rates = res_tuple[2]
-
     he_train_trial_pcs = res_tuple[3]
     he_train_trial_c_smth_pcs = res_tuple[4]
     he_train_trial_ac_smth_pcs = res_tuple[5]
-    #───────#
 
     # HE Test Trials
-
     res_tuple = run_exclusion_trials('he_test_trial_idx', 'he_test_trial_hi', 'he_test_trial_ho')
-
     he_test_trial_rates = res_tuple[0]
     he_test_trial_c_smth_rates = res_tuple[1]
     he_test_trial_ac_smth_rates = res_tuple[2]
-
     he_test_trial_pcs = res_tuple[3]
     he_test_trial_c_smth_pcs = res_tuple[4]
     he_test_trial_ac_smth_pcs = res_tuple[5]
-    #───────#
 
-    # Heldin Rates vs Spikes Indv
-    html = plot_rates_vs_spks_indv(
-        test_rates,
-        caus_smth_test_rates,
-        acaus_smth_test_rates,
-        h5dict['test_hi_30_smth_spikes'],
-        h5dict['test_hi_50_smth_spikes'],
-        h5dict['test_hi_80_smth_spikes'],
-        heldin=True
-    )
+    ### DECODING ###
 
-    if not local_save:
-        wandb.log({'Spikes vs Rates Heldin': wandb.Html(html, inject=False)})
-    else:
-        with open(f"plots/{model.name}/hi_all_spk_vs_rates.html", "w") as f:
-            f.write(html)
-    #───────#
+    def get_cobps(rates, spikes):
+        # print(np.expand_dims(np.concatenate(rates, axis=0), axis=1)[98:].shape)
+        # print(np.array([i[-1:, :] for i in spikes]).shape)
+        # # print(np.array([i for i in rates]).shape)
+        # print(np.expand_dims(rates[:, 98:], axis=1).shape)
+        # print(spikes.shape)
+        return float(bits_per_spike(
+            np.expand_dims(np.concatenate(rates, axis=0), axis=1)[:, :, 98:], 
+            np.array([i[-1:, :] for i in spikes])
+        ))
 
-    # all_train PCA
-    html = plot_pca(
-        np.array(all_train_trial_pcs), 
-        np.array(all_train_trial_c_smth_pcs), 
-        np.array(all_train_trial_ac_smth_pcs),
-        h5dict['all_train_trial_angles'], 
-        config['train']['smth_std'],
-        add_legend=False,
-        title='All Test Trials'
-    )
+    result_dict = {}
+    result_dict['test co-bps'] = float(bits_per_spike(np.expand_dims(test_rates[:, 98:], axis=1), np.expand_dims(h5dict['test_spikes_heldout'][:, -1, :], axis=1)))
+    result_dict['he test trials co-bps'] = get_cobps(he_test_trial_rates, h5dict['he_test_trial_ho'])
+    result_dict['me test trials co-bps'] = get_cobps(me_test_trial_rates, h5dict['me_test_trial_ho'])
+    result_dict['le test trials co-bps'] = get_cobps(le_test_trial_rates, h5dict['le_test_trial_ho'])
 
-    if not local_save:
-        wandb.log({'Rates PCA': wandb.Html(html, inject=False)})
-    else:
-        with open(f"plots/{model.name}/all_train_rates_pca.html", "w") as f:
-            f.write(html)
-    #───────#
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(train_rates, h5dict['train_vel'])
+    result_dict['test decoding'] = gscv.score(test_rates, h5dict['test_vel'])
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(caus_smth_train_rates, h5dict['train_vel'])
+    result_dict['test causal decoding'] = gscv.score(caus_smth_test_rates, h5dict['test_vel'])
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(acaus_smth_train_rates, h5dict['train_vel'])
+    result_dict['test acausal decoding'] = gscv.score(acaus_smth_test_rates, h5dict['test_vel'])
 
-    # le_train PCA
-    html = plot_pca(
-        np.array(le_train_trial_pcs), 
-        np.array(le_train_trial_c_smth_pcs), 
-        np.array(le_train_trial_ac_smth_pcs),
-        h5dict['le_train_trial_angles'], 
-        config['train']['smth_std'],
-        add_legend=False,
-        title='All Test Trials'
-    )
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(np.concatenate(he_train_trial_rates, axis=0), h5dict['he_train_trial_vel'])
+    result_dict['he test decoding'] = gscv.score(np.concatenate(he_test_trial_rates, axis=0), h5dict['he_test_trial_vel'])
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(np.concatenate(he_train_trial_c_smth_rates, axis=0), h5dict['he_train_trial_vel'])
+    result_dict['he test causal decoding'] = gscv.score(np.concatenate(he_test_trial_c_smth_rates, axis=0), h5dict['he_test_trial_vel'])
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(np.concatenate(he_train_trial_ac_smth_rates, axis=0), h5dict['he_train_trial_vel'])
+    result_dict['he test acausal decoding'] = gscv.score(np.concatenate(he_test_trial_ac_smth_rates, axis=0), h5dict['he_test_trial_vel'])
+    
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(np.concatenate(me_train_trial_rates, axis=0), h5dict['me_train_trial_vel'])
+    result_dict['me test decoding'] = gscv.score(np.concatenate(me_test_trial_rates, axis=0), h5dict['me_test_trial_vel'])
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(np.concatenate(me_train_trial_c_smth_rates, axis=0), h5dict['me_train_trial_vel'])
+    result_dict['me test causal decoding'] = gscv.score(np.concatenate(me_test_trial_c_smth_rates, axis=0), h5dict['me_test_trial_vel'])
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(np.concatenate(me_train_trial_ac_smth_rates, axis=0), h5dict['me_train_trial_vel'])
+    result_dict['me test acausal decoding'] = gscv.score(np.concatenate(me_test_trial_ac_smth_rates, axis=0), h5dict['me_test_trial_vel'])
+    
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(np.concatenate(le_train_trial_rates, axis=0), h5dict['le_train_trial_vel'])
+    result_dict['le test decoding'] = gscv.score(np.concatenate(le_test_trial_rates, axis=0), h5dict['le_test_trial_vel'])
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(np.concatenate(le_train_trial_c_smth_rates, axis=0), h5dict['le_train_trial_vel'])
+    result_dict['le test causal decoding'] = gscv.score(np.concatenate(le_test_trial_c_smth_rates, axis=0), h5dict['le_test_trial_vel'])
+    gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    gscv.fit(np.concatenate(le_train_trial_ac_smth_rates, axis=0), h5dict['le_train_trial_vel'])
+    result_dict['le test acausal decoding'] = gscv.score(np.concatenate(le_test_trial_ac_smth_rates, axis=0), h5dict['le_test_trial_vel'])
 
-    if not local_save:
-        wandb.log({'Rates PCA': wandb.Html(html, inject=False)})
-    else:
-        with open(f"plots/{model.name}/le_train_rates_pca.html", "w") as f:
-            f.write(html)
-
-    # me_train PCA
-    html = plot_pca(
-        np.array(me_train_trial_pcs), 
-        np.array(me_train_trial_c_smth_pcs), 
-        np.array(me_train_trial_ac_smth_pcs),
-        h5dict['me_train_trial_angles'], 
-        config['train']['smth_std'],
-        add_legend=False,
-        title='All Test Trials'
-    )
 
     if not local_save:
-        wandb.log({'ME Rates PCA': wandb.Html(html, inject=False)})
+        wandb.log(result_dict)
     else:
-        with open(f"plots/{model.name}/me_train_rates_pca.html", "w") as f:
-            f.write(html)
+        with open(f"plots/{model.name}/eval_results.txt", "w") as f:
+            for k, v in result_dict:
+                f.write(f'{k}: {v}\n')
 
-    # he_train PCA
-    html = plot_pca(
-        np.array(he_train_trial_pcs), 
-        np.array(he_train_trial_c_smth_pcs), 
-        np.array(he_train_trial_ac_smth_pcs),
-        h5dict['he_train_trial_angles'], 
-        config['train']['smth_std'],
-        add_legend=False,
-        title='All Test Trials'
-    )
+    ### PLOTS ###
 
-    if not local_save:
-        wandb.log({'HE Rates PCA': wandb.Html(html, inject=False)})
-    else:
-        with open(f"plots/{model.name}/he_train_rates_pca.html", "w") as f:
-            f.write(html)
-    #───────#
+    # ## Test Heldin Rates vs Spikes Indv
+    # html = plot_rates_vs_spks_indv(
+    #     test_rates,
+    #     caus_smth_test_rates,
+    #     acaus_smth_test_rates,
+    #     h5dict['test_hi_30_smth_spikes'],
+    #     h5dict['test_hi_50_smth_spikes'],
+    #     h5dict['test_hi_80_smth_spikes'],
+    #     heldin=True
+    # )
+    # if not local_save:
+    #     wandb.log({'Test Spikes vs Rates Heldin': wandb.Html(html, inject=False)}))
+    # else:
+    #     with open(f"plots/{model.name}/hi_all_spk_vs_rates.html", "w") as f:
+    #         f.write(html)
+
+    # ## all_train PCA
+    # html = plot_pca(
+    #     np.array(all_train_trial_pcs), 
+    #     np.array(all_train_trial_c_smth_pcs), 
+    #     np.array(all_train_trial_ac_smth_pcs),
+    #     h5dict['all_train_trial_angles'], 
+    #     config['train']['smth_std'],
+    #     add_legend=False,
+    #     title='All Train Trials'
+    # )
+    # if not local_save:
+    #     wandb.log({'All Train Rates PCA': wandb.Html(html, inject=False)})
+    # else:
+    #     with open(f"plots/{model.name}/all_train_rates_pca.html", "w") as f:
+    #         f.write(html)
+
+    # ## all_test PCA
+    # html = plot_pca(
+    #     np.array(all_test_trial_pcs), 
+    #     np.array(all_test_trial_c_smth_pcs), 
+    #     np.array(all_test_trial_ac_smth_pcs),
+    #     h5dict['all_test_trial_angles'], 
+    #     config['train']['smth_std'],
+    #     add_legend=False,
+    #     title='All Test Trials'
+    # )
+    # if not local_save:
+    #     wandb.log({'All Test Rates PCA': wandb.Html(html, inject=False)})
+    # else:
+    #     with open(f"plots/{model.name}/all_test_rates_pca.html", "w") as f:
+    #         f.write(html)
+
+    # ## le_train PCA
+    # html = plot_pca(
+    #     np.array(le_train_trial_pcs), 
+    #     np.array(le_train_trial_c_smth_pcs), 
+    #     np.array(le_train_trial_ac_smth_pcs),
+    #     h5dict['le_train_trial_angles'], 
+    #     config['train']['smth_std'],
+    #     add_legend=False,
+    #     title='LE Train Trials'
+    # )
+    # if not local_save:
+    #     wandb.log({'LE Train Rates PCA': wandb.Html(html, inject=False)})
+    # else:
+    #     with open(f"plots/{model.name}/le_train_rates_pca.html", "w") as f:
+    #         f.write(html)
+
+    # ## me_train PCA
+    # html = plot_pca(
+    #     np.array(me_train_trial_pcs), 
+    #     np.array(me_train_trial_c_smth_pcs), 
+    #     np.array(me_train_trial_ac_smth_pcs),
+    #     h5dict['me_train_trial_angles'], 
+    #     config['train']['smth_std'],
+    #     add_legend=False,
+    #     title='ME Train Trials'
+    # )
+    # if not local_save:
+    #     wandb.log({'ME Train Rates PCA': wandb.Html(html, inject=False)})
+    # else:
+    #     with open(f"plots/{model.name}/me_train_rates_pca.html", "w") as f:
+    #         f.write(html)
+
+    # ## he_train PCA
+    # html = plot_pca(
+    #     np.array(he_train_trial_pcs), 
+    #     np.array(he_train_trial_c_smth_pcs), 
+    #     np.array(he_train_trial_ac_smth_pcs),
+    #     h5dict['he_train_trial_angles'], 
+    #     config['train']['smth_std'],
+    #     add_legend=False,
+    #     title='HE Train Trials'
+    # )
+    # if not local_save:
+    #     wandb.log({'HE Train Rates PCA': wandb.Html(html, inject=False)})
+    # else:
+    #     with open(f"plots/{model.name}/he_train_rates_pca.html", "w") as f:
+    #         f.write(html)
+
 
 def test_eval(config, model):
 

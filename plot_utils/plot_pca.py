@@ -36,11 +36,15 @@ def plot_pca(
         )
 
     fig.update_layout(
-        width=500,
+        width=460,
         height=500,
         autosize=False,
         showlegend=False,
-        title=title,
+        title={
+            'text': title,
+            'y':0.96,
+            'yanchor': 'bottom'
+        },
         scene=dict(
             xaxis_showspikes=False,
             yaxis_showspikes=False,
@@ -50,10 +54,16 @@ def plot_pca(
             zaxis_title="PC3",
             camera=dict(
                 center=dict(
-                    x=0.0,
+                    x=0.065,
                     y=0.0,
-                    z=-0.125,
+                    z=-0.075,
+                    # z=-0.12,
                 ),
+                eye=dict(
+                    x=1.3, 
+                    y=1.3, 
+                    z=1.3
+                )
             ),
             aspectratio = dict( x=1, y=1, z=1 ),
             aspectmode = 'manual'
@@ -99,8 +109,8 @@ def plot_pca(
             'direction': 'down',
             'pad': {"r": 0, "t": 0, "b": 0, "l": 0},
             'showactive':True,
-            'x':0.6,
-            'xanchor':"center",
+            'x':0.98,
+            'xanchor':"right",
             'y':1.01,
             'yanchor':"bottom"
         }
@@ -110,11 +120,11 @@ def plot_pca(
             dict(
                 text="Rates Smoothing:", 
                 showarrow=False,
-                x=0.1, 
-                y=1.01, 
+                x=0.62, 
+                y=1.066, 
                 yref="paper", 
                 xref="paper",
-                xanchor="left", 
+                xanchor="right", 
                 align="left",
             )
         ]
@@ -132,7 +142,7 @@ def plot_pca(
             )
         )
 
-    fig.update_layout(margin=dict(r=0, l=0, b=0, t=100))
+    fig.update_layout(margin=dict(r=0, l=0, b=0, t=50))
 
     config = {'displayModeBar': False}
     return fig.to_html(config=config, full_html=False, include_plotlyjs='cdn')

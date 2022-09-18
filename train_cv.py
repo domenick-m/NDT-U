@@ -6,7 +6,7 @@ from test_eval import test_eval
 import os
 # import gc
 import sys
-# import time
+import time
 import shutil
 
 from glob import glob
@@ -80,7 +80,7 @@ def main():
         # The agent function below starts running the run_sweep unitl killed
         wandb.agent(
             sweep_id,
-            function=(lambda: run_cv_sweep(config)) if config['train']['cross_val'] else run_sweep,
+            function=(lambda: run_cv_sweep(config)) if config['train']['val_type'] == 'cross_val' else run_sweep,
             count=config['train']['sweep_epochs'] if (
                 config['train']['sweep_type'] != 'grid'
             ) else None)
@@ -90,7 +90,7 @@ def main():
     # Run single train
     else:
         set_seeds(config)
-        if config['train']['cross_val']:
+        if config['train']['val_type'] == 'cross_val':
             run_cv_single(config, device, model_name)
         else:
             run_single(config, device, model_name)
@@ -188,7 +188,6 @@ def run_cv_sweep(config):
     wandb.init(
         dir=get_wandb_dir(),
         config=get_config_dict(),
-        entity=config['wandb']['entity'],
     )
     
     wandb.config.update(
@@ -200,9 +199,6 @@ def run_cv_sweep(config):
 
     config = get_wandb_config()
     name = wandb.run.name
-
-    # del os.environ["WANDB_SWEEP_ID"]
-    # del os.environ["WANDB_SWEEP_PARAM_PATH"]
         
     set_seeds(config)
 
@@ -216,40 +212,10 @@ def run_cv_sweep(config):
     train_dataloader, fold_dataloaders = get_dataloaders(config, 'cross-val')
 
     for idx, train_sub_dl, val_sub_dl in fold_dataloaders:
-        # reset_wandb_env()
         run_name = f'{name}-{idx}'
-        run = wandb.init(
-            id=wandb.util.generate_id(),
-            group=name,
-            reinit=True,
-            name=run_name,
-            project=config['wandb']['project']
-        )
-
         dataset_sub = train_sub_dl.dataset.dataset
         model = Transformer(config, dataset_sub, run_name).to(device)
-        train(model, train_sub_dl, val_sub_dl, device)
-        run.finish()
-        wandb.join()
-
-    # os.environ['WANDB_RUN_GROUP'] = test
-    reset_wandb_env()
-    wandb.init(
-        id=wandb.util.generate_id(),
-        name=name,
-        group=name,
-        config=get_config_dict(config),
-        project=config['wandb']['project']
-    )
-
-    wandb.config.update(
-        get_config_dict(
-            get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml')
-        ),
-        allow_val_change=True
-    )
-        
-    config = get_wandb_config()
+        train(model, train_sub_dl, val_sub_dl, device, str(idx))
 
     dataset = train_dataloader.dataset
     model = Transformer(config, dataset, name).to(device)
@@ -400,7 +366,7 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
                 loss = masked_loss.mean()
 
             if config['wandb']['log']:
-                wandb.log({'train loss': loss}, step=epoch)
+                wandb.log({f'train loss{fold}': loss, 't_epochs':epoch})
                 
             scaler.scale(loss).backward()
 
@@ -416,7 +382,7 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
         if scheduler != None:
             scheduler.step()
             if config['wandb']['log']:
-                wandb.log({'lr':scheduler.optimizer.param_groups[0]['lr']}, step=epoch)
+                wandb.log({f'lr{fold}':scheduler.optimizer.param_groups[0]['lr'], 't_epochs':epoch})
 
         # Run on the validation set every 'val_interval' epochs
         if (epoch % config['train']['val_interval'] == 0 and
@@ -462,7 +428,7 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
             eval_rates_heldout = torch.split(eval_rates, hldt_splt, -1)[1].cpu().numpy()
 
             co_bps = float(bits_per_spike(eval_rates_heldout, eval_ho_spikes))
-            lt_co_bps = float(bits_per_spike(np.expand_dims(eval_rates_heldout[:, -1, :], axis=-1), np.expand_dims(eval_ho_spikes[:, -1, :], axis=-1)))
+            lt_co_bps = float(bits_per_spike(np.expand_dims(eval_rates_heldout[:, -1, :], axis=-2), np.expand_dims(eval_ho_spikes[:, -1, :], axis=-2)))
             val_loss = np.mean(all_loss)
 
             # Save current model if it scores higher than the max_co_bps and is past the save_min_bps
@@ -487,7 +453,7 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
             }
 
             # Update the report above the progress bar and upload to wandb
-            upload_print_results(config, results_dict, progress_bar, save_path)
+            upload_print_results(config, results_dict, progress_bar, save_path, fold)
 
             # If co-bps is lower than the es_min_bps, then stop the training
             if (es_counter >=  config['train']['es_patience'] or (
