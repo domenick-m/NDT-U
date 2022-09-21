@@ -18,7 +18,11 @@ from nlb_tools.make_tensors import h5_to_dict
 # from nlb_tools.nwb_interface import NWBDataset
 from nlb_tools.evaluation import bits_per_spike
 from sklearn.model_selection import GridSearchCV
-# from configs.default_config import get_config_from_file
+from utils import get_config_from_file, set_seeds
+from sklearn.model_selection import KFold
+
+from sklearn.linear_model import PoissonRegressor
+
 from plot_utils.plot_rates_vs_spks_indv import plot_rates_vs_spks_indv
 # from plot_utils.plot_rates_vs_spks_all import plot_rates_vs_spks_all
 from plot_utils.plot_pca import plot_pca
@@ -70,6 +74,7 @@ def eval_mc_rtt(config, model, local_save):
     )
 
     device = torch.device('cuda:0')
+    set_seeds(config)
 
     with h5py.File(path, 'r') as h5file:
         h5dict = h5_to_dict(h5file)
@@ -117,8 +122,8 @@ def eval_mc_rtt(config, model, local_save):
     ### DATA ###
 
     ## Full Train Dataset
-    spikes = torch.Tensor(h5dict['train_spikes_heldin']).to(device)
-    heldout_spikes = torch.Tensor(h5dict['train_spikes_heldout']).to(device)
+    spikes = torch.Tensor(h5dict['all_train_spikes_heldin']).to(device)
+    heldout_spikes = torch.Tensor(h5dict['all_train_spikes_heldout']).to(device)
     with torch.no_grad():
         spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes)], -1)
         train_rates = model(spikes)[:, -1, :].exp().cpu().numpy()
@@ -279,7 +284,7 @@ def eval_mc_rtt(config, model, local_save):
 
     ### PLOTS ###
 
-    # ## Test Heldin Rates vs Spikes Indv
+    ## Test Heldin Rates vs Spikes Indv
     # html = plot_rates_vs_spks_indv(
     #     test_rates,
     #     caus_smth_test_rates,
@@ -290,7 +295,7 @@ def eval_mc_rtt(config, model, local_save):
     #     heldin=True
     # )
     # if not local_save:
-    #     wandb.log({'Test Spikes vs Rates Heldin': wandb.Html(html, inject=False)}))
+    #     wandb.log({'Test Spikes vs Rates Heldin': wandb.Html(html, inject=False)})
     # else:
     #     with open(f"plots/{model.name}/hi_all_spk_vs_rates.html", "w") as f:
     #         f.write(html)
@@ -392,8 +397,89 @@ def test_eval(config, model):
     # else:
     #     eval_t5_cursor(wandb, model, config, device)
 
+def get_lag_and_smth():
+    if len(sys.argv) == 1 or len(sys.argv) > 2:
+        print("Invalid Arguments...\n\nYou must supply a path to a '.pt' file.")
+        exit()
+    path = sys.argv[1]
+    name = path[:path.rindex('/')].split('/')[-1]
+    config = get_config_from_file(path[:path.rindex('/')+1]+'config.yaml')
+    if not os.path.isdir(f"plots/{name}"): os.makedirs(f"plots/{name}")
+    shutil.copyfile(path[:path.rindex('/')+1]+'config.yaml', f"plots/{name}/config.yaml")
+
+    path = '{0}{1}_{2}_{3}_{4}.h5'.format(
+        config["setup"]["data_dir"], 
+        config["setup"]["dataset"], 
+        config["train"]["seq_len"], 
+        config["train"]["overlap"], 
+        config["train"]["lag"]
+    )
+
+    device = torch.device('cuda:0')
+    set_seeds(config)
+
+    with h5py.File(path, 'r') as h5file:
+        h5dict = h5_to_dict(h5file)
 
 
+    def fit_poisson(alpha, train_x, train_y, val_x):
+        val_pred = []
+        train_x =  np.log(train_x + config['setup']['log_eps'])
+        val_x =  np.log(val_x + config['setup']['log_eps'])
+        for chan in range(train_y.shape[1]):
+            pr = PoissonRegressor(alpha=alpha, max_iter=500)
+            pr.fit(train_x, train_y[:, chan])
+            while pr.n_iter_ == pr.max_iter and pr.max_iter < 10000:
+                print(f"didn't converge - retraining {chan} with max_iter={pr.max_iter * 5}")
+                oldmax = pr.max_iter
+                del pr
+                pr = PoissonRegressor(alpha=alpha, max_iter=oldmax * 5)
+                pr.fit(train_x, train_y[:, chan])
+            val_pred.append(pr.predict(val_x))
+        val_rates_s = np.vstack(val_pred).T
+        return np.clip(val_rates_s, 1e-9, 1e20)
+
+    kf = KFold(n_splits=5)
+
+    stds = [30,  40, 50, 60, ]
+    # stds = [10, 20, 30,  40, 50, 60, 70, 80,  90,  110, 130, 150]
+    
+    filters = []
+    for std in stds:
+        kern_sd = int(round(std / 10))
+        window = signal.gaussian(kern_sd * 6, kern_sd, sym=True)
+        window /= np.sum(window)
+        filters.append(lambda x: np.convolve(x, window, 'same'))
+
+    train_spikes_heldin = h5dict['all_train_spikes_heldin'][:, -1, :]
+    train_spikes_heldout = h5dict['all_train_spikes_heldout'][:, -1, :]
+    test_spikes_heldin = h5dict['test_spikes_heldin'][:, -1, :]
+    test_spikes_heldout = h5dict['test_spikes_heldout'][:, -1, :]
+
+    for std, filter in zip(stds, filters):
+        for alpha in np.logspace(-3, 0, 4):
+            split = []
+            split_test = []
+            for train_index, val_index in kf.split(train_spikes_heldin):
+                heldin_smth_spikes= np.apply_along_axis(filter, 0, train_spikes_heldin)
+                train_hi = heldin_smth_spikes[train_index]
+                val_hi = heldin_smth_spikes[val_index]
+                train_ho = train_spikes_heldout[train_index]
+                val_ho = train_spikes_heldout[val_index]
+                val_rates = fit_poisson(alpha, train_hi, train_ho, val_hi)
+                split.append(bits_per_spike(np.expand_dims(val_rates, 1), np.expand_dims(val_ho, 1)))
+            print('alpha:',alpha,'std:',std)
+            print('val mean:', np.mean(np.array(split)))
+            train_hi= np.apply_along_axis(filter, 0, train_spikes_heldin)
+            train_ho = train_spikes_heldout
+            test_hi= np.apply_along_axis(filter, 0, test_spikes_heldin)
+            test_ho = test_spikes_heldout
+            val_rates = fit_poisson(alpha, train_hi, train_ho, test_hi)
+            print('test:', bits_per_spike(np.expand_dims(val_rates, 1), np.expand_dims(test_ho, 1)))
+
+
+if __name__ == "__main__":
+    get_lag_and_smth()
 
 
 

@@ -2,6 +2,7 @@
 # Author: Domenick Mifsud
 #───────#
 import os
+import sys
 import math
 import random
 import subprocess
@@ -76,6 +77,7 @@ def get_config(arg_dict):
     if config.setup.cfg_path != '' and os.isfile(config.setup.cfg_path):
         def_config.merge_from_file(config.setup.cfg_path) 
     if '--sweep' in arg_dict: def_config.train.sweep_enabled = True # '--sweep' is a shortcut for '--sweep_enabled True'
+    print(arg_dict)
     for sec in def_config.keys(): # section names
         for key in def_config[sec].keys(): # config parameters
             if '--'+key in arg_dict and key != 'sweep':
@@ -233,9 +235,14 @@ def set_sweep_config(config, arg_dict):
     if empty:
         print("Cannot start a sweep, please add values under 'config.wandb.sweep'.")
         exit()
+    command = ['${env}', 'python3', '${program}', '-y', '${args}']
     sweep_config = {
         'name' : config['wandb']['sweep_name'],
+        'project' : config['wandb']['project'],
+        'entity' : config['wandb']['entity'],
         'method' : config['train']['sweep_type'],
+        'program' : 'train_cv.py',
+        'command' : command,
         'parameters' : sweep_dict
     }
     sweep_id = wandb.sweep(sweep_config, project=config['wandb']['project'])
@@ -273,9 +280,9 @@ def setup_runs_folder(config, model, mode):
     os.makedirs(path)
     with open(path+'/config.yaml', 'w') as yamlfile:
         data = yaml.dump(cfg_node_to_dict(config), yamlfile)
-    if config['wandb']['log']:
-        with open(path+'/wandb_run_id.txt', 'w') as f:
-            f.write(wandb.run.id)
+    # if config['wandb']['log']:
+    #     with open(path+'/wandb_run_id.txt', 'w') as f:
+    #         f.write(wandb.run.id)
     return path+'/'
 
 def wandb_cleanup():
@@ -331,6 +338,10 @@ def get_norm(config, n_neurons):
         return nn.LayerNorm(n_neurons)
     elif config['model']['norm'] == 'scale':
         return ScaleNorm(n_neurons**0.5)
+    elif config['model']['norm'] == 'group':
+        return GNorm(config['model']['gnorm_groups'], n_neurons)
+    elif config['model']['norm'] == 'switch':
+        return SwitchNorm2d(n_neurons)
 
 class ScaleNorm(nn.Module):
     '''ScaleNorm'''
@@ -343,6 +354,92 @@ class ScaleNorm(nn.Module):
         norm = self.scale / torch.norm(x, dim=-1, keepdim=True).clamp(min=self.eps)
         return x * norm
 
+class GNorm(nn.Module):
+    '''ScaleNorm'''
+    def __init__(self, groups, feature_dims):
+        super(GNorm, self).__init__()
+        if groups == -1: groups = feature_dims
+        self.gn = nn.GroupNorm(groups, feature_dims)
+
+    def forward(self, x):
+        return self.gn(x.permute(1, 2, 0)).permute(2, 0, 1)
+
+class SwitchNorm2d(nn.Module):
+    def __init__(self, num_features, eps=1e-5, momentum=0.9, using_moving_average=True, using_bn=True,
+                 last_gamma=False):
+        super(SwitchNorm2d, self).__init__()
+        self.eps = eps
+        self.momentum = momentum
+        self.using_moving_average = using_moving_average
+        self.using_bn = using_bn
+        self.last_gamma = last_gamma
+        self.weight = nn.Parameter(torch.ones(1, num_features, 1))
+        self.bias = nn.Parameter(torch.zeros(1, num_features, 1))
+        if self.using_bn:
+            self.mean_weight = nn.Parameter(torch.ones(3))
+            self.var_weight = nn.Parameter(torch.ones(3))
+        else:
+            self.mean_weight = nn.Parameter(torch.ones(2))
+            self.var_weight = nn.Parameter(torch.ones(2))
+        if self.using_bn:
+            self.register_buffer('running_mean', torch.zeros(1, num_features, 1))
+            self.register_buffer('running_var', torch.zeros(1, num_features, 1))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        if self.using_bn:
+            self.running_mean.zero_()
+            self.running_var.zero_()
+        if self.last_gamma:
+            self.weight.data.fill_(0)
+        else:
+            self.weight.data.fill_(1)
+        self.bias.data.zero_()
+
+    def forward(self, x):
+        x = x.permute(1, 2, 0)
+        N, C, H = x.size()
+        x = x.view(N, C, -1)
+        mean_in = x.mean(-1, keepdim=True)
+        var_in = x.var(-1, keepdim=True)
+
+        mean_ln = mean_in.mean(1, keepdim=True)
+        temp = var_in + mean_in ** 2
+        var_ln = temp.mean(1, keepdim=True) - mean_ln ** 2
+
+        if self.using_bn:
+            if self.training:
+                mean_bn = mean_in.mean(0, keepdim=True)
+                var_bn = temp.mean(0, keepdim=True) - mean_bn ** 2
+                if self.using_moving_average:
+                    self.running_mean.mul_(self.momentum)
+                    self.running_mean.add_((1 - self.momentum) * mean_bn.data)
+                    self.running_var.mul_(self.momentum)
+                    self.running_var.add_((1 - self.momentum) * var_bn.data)
+                else:
+                    self.running_mean.add_(mean_bn.data)
+                    self.running_var.add_(mean_bn.data ** 2 + var_bn.data)
+            else:
+                mean_bn = torch.autograd.Variable(self.running_mean)
+                var_bn = torch.autograd.Variable(self.running_var)
+
+        softmax = nn.Softmax(0)
+        mean_weight = softmax(self.mean_weight)
+        var_weight = softmax(self.var_weight)
+
+        if self.using_bn:
+            mean = mean_weight[0] * mean_in + mean_weight[1] * mean_ln + mean_weight[2] * mean_bn
+            var = var_weight[0] * var_in + var_weight[1] * var_ln + var_weight[2] * var_bn
+        else:
+            mean = mean_weight[0] * mean_in + mean_weight[1] * mean_ln
+            var = var_weight[0] * var_in + var_weight[1] * var_ln
+
+        x = (x-mean) / (var+self.eps).sqrt()
+        x = x.view(N, C, H)
+        x = x * self.weight + self.bias
+        return x.permute(2, 0, 1)
+
 
 def get_scheduler(optimizer, config):
 # def get_scheduler(optimizer, config, dataloader_size):
@@ -353,19 +450,12 @@ def get_scheduler(optimizer, config):
         config (dict): A config object.
     '''
     scheduler = None
-    # total = dataloader_size * config['train']['epochs']
     if config['train']['scheduler'] == 'Cosine':
         scheduler = WarmupCosineSchedule(
             optimizer,
             warmup_steps=config['train']['warmup_steps'],
             t_total=config['train']['epochs']
         )
-    # scheduler = None
-    # total = dataloader_size * config['train']['epochs']
-    # if config['train']['scheduler'] == 'Cosine':
-    #     scheduler = WarmupCosineSchedule(optimizer,
-    #         warmup_steps=config['train']['warmup_steps'],
-    #         t_total=total)
     # elif config['train']['scheduler'] == 'new scheduler':
     #     scheduler = new scheduler(optimizer,)
     return scheduler
@@ -421,7 +511,12 @@ def parse_args(args):
                 print('\n! Argument Missing Value. !\n  '+arg+' is missing a value.\n  '+'‾'*len(arg))
                 exit()
         elif arg[:2] == '--':
-            if arg[2:] not in type_dict:
+            param = arg[2:]
+            if '.' in param:
+                param = param.split('.')[1]
+                param, val = param.split('=')
+                args.insert(index+1, val)
+            if param not in type_dict:
                 print('\n! Invalid Argument. !\n  '+arg+' is not recognized.\n  '+'‾'*len(arg))
                 print('use -h to show help message.')
                 exit()
@@ -429,12 +524,12 @@ def parse_args(args):
                 print('\n! Argument Missing Value. !\n  '+arg+' is missing a value.\n  '+'‾'*len(arg))
                 exit()
             try:
-                arg_dict[arg] = type_dict[arg[2:]](strtobool(args[index+1])) if (
-                    type_dict[arg[2:]] == bool
-                ) else type_dict[arg[2:]](args[index+1])
+                arg_dict[arg] = type_dict[param](strtobool(args[index+1])) if (
+                    type_dict[param] == bool
+                ) else type_dict[param](args[index+1])
             except:
                 print('\n! Argument Type Error. !')
-                print('  '+arg+' '+args[index+1]+' ← needs to be type: '+str(type_dict[arg[2:]]))
+                print('  '+arg+' '+args[index+1]+' ← needs to be type: '+str(type_dict[param]))
                 print(' '*(len(arg)+3) + '‾'*len(args[index+1]))
                 exit()
     return arg_dict
@@ -461,7 +556,7 @@ def print_run_get_prog_bar(config, model, wandb=None):
         model.name, w_1,
         ('GPU:'+os.environ['CUDA_VISIBLE_DEVICES']).center(w_1),
         'n_parameters: '+params, w_2
-    ))
+    ), file=sys.stderr)
     bar_format = ('Epochs: {n_fmt} / %s {bar} {percentage:3.0f}%% - ETR:{remaining}' % config['train']['epochs'])
     return tqdm(
         range(config['train']['epochs']),
@@ -482,11 +577,11 @@ def upload_print_results(config, result_dict, progress_bar, save_path, fold):
         save_path (str): Where to save locally.
     '''
     epoch = '[Epoch: '+str(result_dict['epoch'])+']'
-    heldin_loss = f'[val heldin loss: {result_dict["heldin_loss"]:.4f}]'
-    heldout_loss = f'[val heldout loss: {result_dict["heldout_loss"]:.4f}]'
-    cobps = f'[val co-bps: {result_dict["co_bps"]:.3f}]'
-    ltcobps = f'[val lt co-bps: {result_dict["lt_co_bps"]:.3f}]'
-    report = epoch + '   ' + heldin_loss + '   ' + heldout_loss + '   ' + cobps + '   ' + ltcobps
+    hi_loss = f'[hi loss: {result_dict["heldin_loss"]:.3f}]'
+    ho_loss = f'[ho loss: {result_dict["heldout_loss"]:.3f}]'
+    cobps = f'[co-bps: {result_dict["co_bps"]:.3f}]'
+    ltcobps = f'[lt co-bps: {result_dict["lt_co_bps"]:.3f}]'
+    report = epoch + '  ' + hi_loss + '  ' + ho_loss + '   ' + cobps + '  ' + ltcobps
     progress_bar.display(msg=report, pos=0)
 
     if config['wandb']['log']:

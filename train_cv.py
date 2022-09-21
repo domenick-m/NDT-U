@@ -16,6 +16,8 @@ import wandb
 import numpy as np
 import torch.nn as nn
 from nlb_tools.evaluation import bits_per_spike
+import subprocess
+
 # #────#
 from transformer import Transformer
 from utils import (get_config,
@@ -49,9 +51,10 @@ from utils import (get_config,
 from datasets import verify_dataset
 from datasets import get_dataloaders
 
-
 # Will beome 'train.py'
-
+import signal
+import sys
+import subprocess
 
 
 def main():
@@ -71,32 +74,24 @@ def main():
 
     # Add an agent to a wandb sweep
     if '--add' in arg_dict:
-        add_sweep_agent(config)
+        add_sweep_agent(config, arg_dict['id'])
         exit()
 
     # Run a wandb sweep
     if config['train']['sweep_enabled'] or '--sweep' in arg_dict:
         sweep_id = set_sweep_config(config, arg_dict)
         # The agent function below starts running the run_sweep unitl killed
-        wandb.agent(
-            sweep_id,
-            function=(lambda: run_cv_sweep(config)) if config['train']['val_type'] == 'cross_val' else run_sweep,
-            count=config['train']['sweep_epochs'] if (
-                config['train']['sweep_type'] != 'grid'
-            ) else None)
+        add_sweep_agent(config, sweep_id)
         # Remove wandb sweep folder when completed
         shutil.rmtree(glob('./wandb/*'+sweep_id+'/')[0])
 
     # Run single train
     else:
         set_seeds(config)
-        if config['train']['val_type'] == 'cross_val':
-            run_cv_single(config, device, model_name)
-        else:
-            run_single(config, device, model_name)
+        run_training(config, device, model_name)
 
 
-def run_single(config, device, name):
+def run_training(config, device, name):
     '''Trains a single model according to config using the train function.
 
     Args:
@@ -105,9 +100,12 @@ def run_single(config, device, name):
                                on.
         name (str): The model name, used to save model and log model reports.
     '''
-    train_dataloader, val_dataloader = get_dataloaders(config, 'train_val')
-
-    dataset = train_dataloader.dataset.dataset # dataset contains all the variables from the Dataset object
+    cross_val_enabled = (config['train']['val_type'] == 'cross_val')
+    
+    train_dataloader, val_dataloader = get_dataloaders(
+        config, 
+        'cross_val' if cross_val_enabled else 'train_val'
+    )
 
     if config['wandb']['log']:
         wandb.init(
@@ -115,8 +113,26 @@ def run_single(config, device, name):
             project=config['wandb']['project'],
             entity=config['wandb']['entity'],
             config=get_config_dict(config))
+    
+    if wandb.run.sweep_id != None:
+        wandb.config.update(
+            get_config_dict(get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml')), 
+            allow_val_change=True
+        )
+        config = get_wandb_config()
 
     name = get_run_name(config, name)
+
+    if cross_val_enabled:
+        for idx, train_sub_dl, val_sub_dl in val_dataloader:
+            run_name = f'{name}-{idx}'
+            dataset_sub = train_sub_dl.dataset.dataset
+            model = Transformer(config, dataset_sub, run_name).to(device)
+            train(model, train_sub_dl, val_sub_dl, device, str(idx))
+        val_dataloader = None
+        dataset = train_dataloader.dataset 
+    else:
+        dataset = train_dataloader.dataset.dataset 
 
     model = Transformer(config, dataset, name).to(device)
     train(model, train_dataloader, val_dataloader, device)
@@ -125,148 +141,148 @@ def run_single(config, device, name):
     wandb_cleanup()
     torch.cuda.empty_cache()
 
-def run_cv_single(config, device, name):
-    '''Trains a single model according to config using the train function.
+# def run_cv_single(config, device, name):
+#     '''Trains a single model according to config using the train function.
 
-    Args:
-        config (CfgNode): The config to be used.
-        device (torch.device): torch.device object containing the GPU to train
-                               on.
-        name (str): The model name, used to save model and log model reports.
-    '''
-    id = wandb.util.generate_id()
-    train_dataloader, fold_dataloaders = get_dataloaders(config, 'cross-val')
+#     Args:
+#         config (CfgNode): The config to be used.
+#         device (torch.device): torch.device object containing the GPU to train
+#                                on.
+#         name (str): The model name, used to save model and log model reports.
+#     '''
+#     id = wandb.util.generate_id()
+#     train_dataloader, fold_dataloaders = get_dataloaders(config, 'cross_val')
     
-    wandb.init(
-        id=id,
-        dir=get_wandb_dir(),
-        config=get_config_dict(config),
-        project=config['wandb']['project'],
-        entity=config['wandb']['entity']
-    )
+#     wandb.init(
+#         id=id,
+#         dir=get_wandb_dir(),
+#         config=get_config_dict(config),
+#         project=config['wandb']['project'],
+#         entity=config['wandb']['entity']
+#     )
 
-    name = get_run_name(config, name)
+#     name = get_run_name(config, name)
 
-    for idx, train_sub_dl, val_sub_dl in fold_dataloaders:
-        reset_wandb_env()
-        run_name = f'{name}-{idx}'
-        run = wandb.init(
-            group=name,
-            reinit=True,
-            name=run_name,
-            dir=get_wandb_dir(),
-            config=get_config_dict(config),
-            project=config['wandb']['project'],
-            entity=config['wandb']['entity']
-        )
-        dataset_sub = train_sub_dl.dataset.dataset
-        model = Transformer(config, dataset_sub, run_name).to(device)
-        train(model, train_sub_dl, val_sub_dl, device)
-        run.finish()
+#     for idx, train_sub_dl, val_sub_dl in fold_dataloaders:
+#         reset_wandb_env()
+#         run_name = f'{name}-{idx}'
+#         run = wandb.init(
+#             group=name,
+#             reinit=True,
+#             name=run_name,
+#             dir=get_wandb_dir(),
+#             config=get_config_dict(config),
+#             project=config['wandb']['project'],
+#             entity=config['wandb']['entity']
+#         )
+#         dataset_sub = train_sub_dl.dataset.dataset
+#         model = Transformer(config, dataset_sub, run_name).to(device)
+#         train(model, train_sub_dl, val_sub_dl, device)
+#         run.finish()
 
-    wandb.init(
-        id=id,
-        name=name,
-        group=name,
-        dir=get_wandb_dir(),
-        config=get_config_dict(config),
-        project=config['wandb']['project'],
-        entity=config['wandb']['entity']
-    )
-    dataset = train_dataloader.dataset
-    model = Transformer(config, dataset, name).to(device)
-    train(model, train_dataloader, None, device)
-    test_eval(config, model)
+#     wandb.init(
+#         id=id,
+#         name=name,
+#         group=name,
+#         dir=get_wandb_dir(),
+#         config=get_config_dict(config),
+#         project=config['wandb']['project'],
+#         entity=config['wandb']['entity']
+#     )
+#     dataset = train_dataloader.dataset
+#     model = Transformer(config, dataset, name).to(device)
+#     train(model, train_dataloader, None, device)
+#     test_eval(config, model)
 
-    wandb_cleanup()
-    torch.cuda.empty_cache()
+#     wandb_cleanup()
+#     torch.cuda.empty_cache()
 
-def run_cv_sweep(config):
-    id = wandb.util.generate_id()
-    device = torch.device('cuda:0') # no args allowed, create local variable
+# def run_cv_sweep(config):
+#     id = wandb.util.generate_id()
+#     device = torch.device('cuda:0') # no args allowed, create local variable
 
-    wandb.init(
-        dir=get_wandb_dir(),
-        config=get_config_dict(),
-    )
+#     wandb.init(
+#         dir=get_wandb_dir(),
+#         config=get_config_dict(),
+#     )
     
-    wandb.config.update(
-        get_config_dict(
-            get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml')
-        ),
-        allow_val_change=True
-    )
+#     wandb.config.update(
+#         get_config_dict(
+#             get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml')
+#         ),
+#         allow_val_change=True
+#     )
 
-    config = get_wandb_config()
-    name = wandb.run.name
+#     config = get_wandb_config()
+#     name = wandb.run.name
         
-    set_seeds(config)
+#     set_seeds(config)
 
-    notes = ''
-    for group in config['wandb']['sweep'].keys():
-        for key in config['wandb']['sweep'][group].keys():
-            notes += '['+key+': '+str(config[group][key])+'] '
+#     notes = ''
+#     for group in config['wandb']['sweep'].keys():
+#         for key in config['wandb']['sweep'][group].keys():
+#             notes += '['+key+': '+str(config[group][key])+'] '
 
-    print(f'\nSweep Parameters:\n  {notes}')
+#     print(f'\nSweep Parameters:\n  {notes}')
 
-    train_dataloader, fold_dataloaders = get_dataloaders(config, 'cross-val')
+#     train_dataloader, fold_dataloaders = get_dataloaders(config, 'cross_val')
 
-    for idx, train_sub_dl, val_sub_dl in fold_dataloaders:
-        run_name = f'{name}-{idx}'
-        dataset_sub = train_sub_dl.dataset.dataset
-        model = Transformer(config, dataset_sub, run_name).to(device)
-        train(model, train_sub_dl, val_sub_dl, device, str(idx))
+#     for idx, train_sub_dl, val_sub_dl in fold_dataloaders:
+#         run_name = f'{name}-{idx}'
+#         dataset_sub = train_sub_dl.dataset.dataset
+#         model = Transformer(config, dataset_sub, run_name).to(device)
+#         train(model, train_sub_dl, val_sub_dl, device, str(idx))
 
-    dataset = train_dataloader.dataset
-    model = Transformer(config, dataset, name).to(device)
-    train(model, train_dataloader, None, device)
-    test_eval(config, model)
+#     dataset = train_dataloader.dataset
+#     model = Transformer(config, dataset, name).to(device)
+#     train(model, train_dataloader, None, device)
+#     test_eval(config, model)
 
-    wandb_cleanup()
-    torch.cuda.empty_cache()
+#     wandb_cleanup()
+#     torch.cuda.empty_cache()
 
-def run_sweep():
-    '''The function that is called by the wandb agent every time it starts a new
-    run. Cannot have any arguments!
-    '''
-    device = torch.device('cuda:0') # no args allowed, create local variable
-    torch.cuda.empty_cache()
-    wandb.init(
-        dir=get_wandb_dir(),
-        config=get_config_dict())
+# def run_sweep(config):
+#     '''The function that is called by the wandb agent every time it starts a new
+#     run. Cannot have any arguments!
+#     '''
+#     device = torch.device('cuda:0') # no args allowed, create local variable
+#     torch.cuda.empty_cache()
+#     wandb.init(
+#         dir=get_wandb_dir(),
+#         config=get_config_dict())
 
-    # Make sure wandb uses the same config as the original sweep, CLI args may have been used
-    wandb.config.update(
-        get_config_dict(get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml')),
-        allow_val_change=True)
+#     # Make sure wandb uses the same config as the original sweep, CLI args may have been used
+#     wandb.config.update(
+#         get_config_dict(get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml')),
+#         allow_val_change=True)
+
+#     config = get_wandb_config()
+#     set_seeds(config)
+
+#     notes = ''
+#     for group in config['wandb']['sweep'].keys():
+#         for key in config['wandb']['sweep'][group].keys():
+#             notes += '['+key+': '+str(config[group][key])+'] '
+#     wandb.run.notes = notes
+
+#     print('\nSweep Parameters:\n  '+notes)
+
+#     train_dataloader, val_dataloader = get_dataloaders(config, 'train_val')
+
+#     dataset = train_dataloader.dataset # dataset contains all the variables from the Dataset object
+#     if config['train']['val_type'] == 'random':
+#         dataset = dataset.dataset # subsets have the object hidden one level further
         
-    config = get_wandb_config()
-    set_seeds(config)
+#     try:
+#         model = Transformer(config, dataset, wandb.run.name).to(device)
+#         train(model, train_dataloader, val_dataloader, device)
 
-    notes = ''
-    for group in config['wandb']['sweep'].keys():
-        for key in config['wandb']['sweep'][group].keys():
-            notes += '['+key+': '+str(config[group][key])+'] '
-    wandb.run.notes = notes
-
-    print('\nSweep Parameters:\n  '+notes)
-
-    train_dataloader, val_dataloader = get_dataloaders(config, config['train']['val_type'])
-
-    dataset = train_dataloader.dataset # dataset contains all the variables from the Dataset object
-    if config['train']['val_type'] == 'random':
-        dataset = dataset.dataset # subsets have the object hidden one level further
-        
-    try:
-        model = Transformer(config, dataset, wandb.run.name).to(device)
-        train(model, train_dataloader, val_dataloader, device)
-
-    except RuntimeError as e:
-        del train_dataloader
-        del val_dataloader
-        del model
-        del dataset
-        torch.cuda.empty_cache()
+#     except RuntimeError as e:
+#         del train_dataloader
+#         del val_dataloader
+#         del model
+#         del dataset
+#         torch.cuda.empty_cache()
     
 
 def add_sweep_agent(config, id=None):
@@ -295,17 +311,21 @@ def add_sweep_agent(config, id=None):
             id = id_list[int(chosen_index)-1]
         else:
             id = file_list[0].split('/')[-1].split('-')[-1]
+
     print('Adding agent to sweep with ID:', id+'\n')
-    # The agent function below starts running the run_sweep until killed
-    wandb.agent(
-        id,
-        function=run_sweep,
-        project=config['wandb']['project'],
-        count=config['train']['sweep_epochs'] if (
-            config['train']['sweep_type'] != 'grid'
-        ) else None
-    )
-    torch.cuda.empty_cache()
+
+    call = ["wandb", "agent", f'{id}']
+    if config['train']['sweep_type'] != 'grid':
+        call.insert(2, '--count')
+        call.insert(3, f'{config["train"]["sweep_epochs"]}')
+
+    with subprocess.Popen(call) as p:
+        try:
+            return p.wait()
+        except:  
+            p.send_signal(signal.SIGINT)
+            p.wait()
+
 
 def train(model, train_dataloader, val_dataloader, device, fold=''):
     ''' The train function used by all training types (single, sweep).
@@ -317,11 +337,8 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
         device (torch.device): torch.device object containing the GPU to train
                                on.
     '''
-    config = model.config
-    # if config['wandb']['log']:
-        # wandb.watch(model, log_freq=config['wandb']['log_freq'])
-
     scaler = torch.cuda.amp.GradScaler()
+    config = model.config
 
     # If the model needs to log then create a folder for it.
     log_local = config['wandb']['log_local'] and not config['wandb']['log']
@@ -349,7 +366,9 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
         expand_prob = min( # probability to expand mask across multiple timesteps, increases starting at ramp_start epochs
             (epoch - config['train']['ramp_start']) /
             (config['train']['ramp_end'] - config['train']['ramp_start']),
-            1)
+            1
+        
+        )
         # Each step is one batch
         for step, (spikes, heldout_spikes) in enumerate(train_dataloader):
 
@@ -451,6 +470,7 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
                 'forward_loss': 0,
                 'heldin_loss': np.mean(heldin_loss),
             }
+            results_dict
 
             # Update the report above the progress bar and upload to wandb
             upload_print_results(config, results_dict, progress_bar, save_path, fold)

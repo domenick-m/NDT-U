@@ -267,7 +267,7 @@ class Transformer(Module):
         if labels == None: return pred_rates
 
         loss = self.classifier(pred_rates, labels)
-        masked_loss = loss[labels != -100]
+        masked_loss = loss[:, -1, :] if self.config['train']['lt_loss_only'] else loss[labels != -100]
         final_loss = masked_loss.mean()
         return final_loss.unsqueeze(0), pred_rates
 
