@@ -38,8 +38,8 @@ config.train.overlap = 25 #
 config.train.lag = 40 # ms to lag kinematic data by 
 config.train.smth_std = 60 # ms std to smooth rates by when decoding
 
-config.train.batch_size = 256 # Number of samples to compute loss with
-config.train.e_batch_size = 256 # Number of samples to compute loss with
+config.train.batch_size = 2048 # Number of samples to compute loss with
+config.train.e_batch_size = 2048 # Number of samples to compute loss with
 config.train.epochs = 50000 # Number of full passes through dataset
 
 config.train.val_interval = 20 # Epochs between running on the validation set

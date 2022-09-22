@@ -6,6 +6,7 @@ import sys
 import math
 import random
 import subprocess
+import signal
 from glob import glob
 from distutils.util import strtobool
 #────#
@@ -77,7 +78,6 @@ def get_config(arg_dict):
     if config.setup.cfg_path != '' and os.isfile(config.setup.cfg_path):
         def_config.merge_from_file(config.setup.cfg_path) 
     if '--sweep' in arg_dict: def_config.train.sweep_enabled = True # '--sweep' is a shortcut for '--sweep_enabled True'
-    print(arg_dict)
     for sec in def_config.keys(): # section names
         for key in def_config[sec].keys(): # config parameters
             if '--'+key in arg_dict and key != 'sweep':
@@ -285,6 +285,7 @@ def setup_runs_folder(config, model, mode):
     #         f.write(wandb.run.id)
     return path+'/'
 
+import time
 def wandb_cleanup():
     '''Deletes the run folder after it's been uploaded.
 
@@ -293,10 +294,10 @@ def wandb_cleanup():
     '''
     if wandb.run != None:
         run_id = wandb.run.id
-        wandb.finish()
+        # wandb.finish()
         dir_q = get_wandb_dir()
         wandb_dir = dir_q if dir_q != None else '.'
-        shutil.rmtree(glob(wandb_dir+'/wandb/*'+run_id+'/')[0])
+        # shutil.rmtree(glob(wandb_dir+'/wandb/*'+run_id+'/')[0])
 
 def get_wandb_dir():
     '''Gets the wandb directory, could be different for different hosts.
@@ -577,22 +578,28 @@ def upload_print_results(config, result_dict, progress_bar, save_path, fold):
         save_path (str): Where to save locally.
     '''
     epoch = '[Epoch: '+str(result_dict['epoch'])+']'
-    hi_loss = f'[hi loss: {result_dict["heldin_loss"]:.3f}]'
-    ho_loss = f'[ho loss: {result_dict["heldout_loss"]:.3f}]'
-    cobps = f'[co-bps: {result_dict["co_bps"]:.3f}]'
-    ltcobps = f'[lt co-bps: {result_dict["lt_co_bps"]:.3f}]'
+    hi_loss = f'[hi loss: {result_dict["heldin_lt_loss"]:.3f}]'
+    ho_loss = f'[ho loss: {result_dict["heldout_lt_loss"]:.3f}]'
+    cobps = f'[co-bps: {result_dict["ho_co_bps"]:.3f}]'
+    ltcobps = f'[lt co-bps: {result_dict["ho_lt_co_bps"]:.3f}]'
     report = epoch + '  ' + hi_loss + '  ' + ho_loss + '   ' + cobps + '  ' + ltcobps
     progress_bar.display(msg=report, pos=0)
 
     if config['wandb']['log']:
         wandb.log({
-            f'val loss{fold}': result_dict['val_loss'],
-            f'val heldout loss{fold}': result_dict['heldout_loss'],
-            f'val co-bps{fold}': result_dict['co_bps'],
-            f'val lt-co-bps{fold}': result_dict['lt_co_bps'],
-            f'val heldin loss{fold}': result_dict['heldin_loss'],
+            f'val all_masked_loss{fold}': result_dict['all_masked_loss'],
+            f'val heldin_masked_loss{fold}': result_dict['heldin_masked_loss'],
+            f'val heldout_masked_loss{fold}': result_dict['heldout_masked_loss'],
+            f'val all_lt_loss{fold}': result_dict['all_lt_loss'],
+            f'val heldin_lt_loss{fold}': result_dict['heldin_lt_loss'],
+            f'val heldout_lt_loss{fold}': result_dict['heldout_lt_loss'],
+            f'val hi_co_bps{fold}': result_dict['hi_co_bps'],
+            f'val ho_co_bps{fold}': result_dict['ho_co_bps'],
+            f'val hi_lt_co_bps{fold}': result_dict['hi_lt_co_bps'],
+            f'val ho_lt_co_bps{fold}': result_dict['ho_lt_co_bps'],
             't_epochs':result_dict['epoch']
         })
+
     elif config['wandb']['log_local']:
         with open(save_path+'report_log.txt', 'a') as f:
             f.write('\n'+report)

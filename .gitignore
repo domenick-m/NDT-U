@@ -4,4 +4,6 @@
 /plots
 */__pycache__
 __pycache__
+/__pycache__
+/__pycache__/*
 plot.ipynb

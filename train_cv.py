@@ -62,6 +62,7 @@ def main():
     arg_dict = parse_args(sys.argv[1:])
     # Overwrite default config with CLI args and dataset_config
     config = get_config(arg_dict)
+    # If data does not exist, download it
     verify_dataset(config) # makes sure datasets are downloaded, if not then prompt
     print_train_configs(config, arg_dict) # prints the config if starting a single run or sweep
     model_name = arg_dict['--name'] # if no name arg was passed then this is None
@@ -87,7 +88,6 @@ def main():
 
     # Run single train
     else:
-        set_seeds(config)
         run_training(config, device, model_name)
 
 
@@ -100,6 +100,7 @@ def run_training(config, device, name):
                                on.
         name (str): The model name, used to save model and log model reports.
     '''
+    set_seeds(config)
     cross_val_enabled = (config['train']['val_type'] == 'cross_val')
     
     train_dataloader, val_dataloader = get_dataloaders(
@@ -140,6 +141,242 @@ def run_training(config, device, name):
 
     wandb_cleanup()
     torch.cuda.empty_cache()
+
+
+def add_sweep_agent(config, id=None):
+    '''Adds an agent to a wandb sweep. If no id is supplied then prompt the user
+    to choose from all current sweeps.
+
+    Args:
+        config (dict): The config to be used.
+        id (str, Optional): The id of the sweep to add this agent to.
+    '''
+    if not id: # prompt the user from all current sweeps
+        file_list = glob('./wandb/sweep*')
+        id = ''
+        id_list = []
+        options = 1
+        if len(file_list) > 1:
+            for file in file_list:
+                last_edit = time.strftime("%m/%d/%y %I:%M%p", time.localtime(os.path.getctime(file)))
+                sweep_id = file.split('/')[-1].split('-')[-1]
+                id_list.append(sweep_id)
+                print(str(options)+': '+sweep_id+' - '+last_edit)
+                options+=1
+            chosen_index = input('\nWhich sweep ID should the sweep agent use? (1-'+str(len(id_list))+'): ')
+            while int(chosen_index) not in range(1,len(id_list)+1):
+                chosen_index = input('\nPlease enter a number between 1 and '+str(len(id_list))+': ')
+            id = id_list[int(chosen_index)-1]
+        else:
+            id = file_list[0].split('/')[-1].split('-')[-1]
+
+    print('Adding agent to sweep with ID:', id+'\n')
+
+    call = ["wandb", "agent", f'{id}']
+    if config['train']['sweep_type'] != 'grid':
+        call.insert(2, '--count')
+        call.insert(3, f'{config["train"]["sweep_epochs"]}')
+
+    with subprocess.Popen(call) as p:
+        try: return p.wait()
+        except:  
+            p.send_signal(signal.SIGINT)
+            p.wait()
+
+
+def train(model, train_dataloader, val_dataloader, device, fold=''):
+    ''' The train function used by all training types (single, sweep).
+
+    Args:
+        model (Transformer): The model to be trained.
+        train_dataloader (DataLoader): Training set DataLoader.
+        val_dataloader (DataLoader): Validation set DataLoader.
+        device (torch.device): torch.device object containing the GPU to train
+                               on.
+    '''
+    if fold != '':
+        model.config['wandb']['log_local'] = False
+        model.config['setup']['save_model'] = False
+
+    scaler = torch.cuda.amp.GradScaler()
+    config = model.config
+
+    # If the model needs to log then create a folder for it.
+    log_local = config['wandb']['log_local'] and not config['wandb']['log']
+
+    save_path = setup_runs_folder(config, model, 'train') if (
+        config['setup']['save_model'] or log_local
+    ) else None
+
+    optimizer = get_optimizer(model, config)
+    scheduler = get_scheduler(optimizer, config)
+
+    # Init values to keep track of best val score
+    max_co_bps = float('-inf') # used to get the best.pt model
+    max_lt_co_bps = float('-inf') # used to get the best.pt model
+
+    # The progress bar shows how much time is remaining and current report
+    progress_bar = print_run_get_prog_bar(config, model, wandb if (
+        config['wandb']['log']) else None)
+
+    es_counter = 0
+
+    # Each epoch is a single pass through the entire dataset.
+    for epoch in range(config['train']['epochs']):
+        model.train() # sets the dropout to on
+
+        expand_prob = min( # probability to expand mask across multiple timesteps, increases starting at ramp_start epochs
+            (epoch - config['train']['ramp_start']) /
+            (config['train']['ramp_end'] - config['train']['ramp_start']),
+            1
+        
+        )
+        # Each step is one batch
+        for step, (spikes, heldout_spikes) in enumerate(train_dataloader):
+
+            # preprocess_batch zero masks, randomizes, and sets the labels for masked and unmaksed
+            masked_spikes, labels = model.preprocess_batch(
+                spikes, # B, T, N
+                expand_prob,
+                heldout_spikes, # B, T, N
+            )
+
+            # Dont need rates only loss
+            with torch.cuda.amp.autocast():
+                loss, _ = model(masked_spikes, labels)
+                lt_loss = loss[:, -1, :].mean()
+                masked_loss = loss[labels != -100].mean()
+
+            if config['wandb']['log']:
+                wandb.log({
+                    f'train masked loss{fold}': masked_loss, 
+                    f'train lt loss{fold}': lt_loss, 
+                    't_epochs':epoch
+                })
+            
+            # Backprop loss
+            scaler.scale(
+                lt_loss if config['train']['lt_loss_only'] else masked_loss
+            ).backward()
+
+            nn.utils.clip_grad_norm_(
+                model.parameters(),
+                config['train']['max_grad_norm'])
+
+            scaler.step(optimizer)
+            scaler.update()
+
+            optimizer.zero_grad(set_to_none=True)
+
+        if scheduler != None:
+            scheduler.step()
+            if config['wandb']['log']:
+                wandb.log({f'lr{fold}':scheduler.optimizer.param_groups[0]['lr'], 't_epochs':epoch})
+
+        # Run on the validation set every 'val_interval' epochs
+        if (epoch % config['train']['val_interval'] == 0 and
+            val_dataloader != None
+        ):
+            model.eval() # turns off dropout
+
+            all_loss, heldout_loss, heldin_loss = [], [], []
+            eval_rates, eval_hi_spikes, eval_ho_spikes = [], [], []
+            results_dict = {}
+
+            for step, (spikes, heldout_spikes) in enumerate(val_dataloader):
+                with torch.no_grad():
+                    labels = spikes.clone()
+                    labels = torch.cat([labels, heldout_spikes], -1)
+                    spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes, device=device)], -1)
+
+                    loss, rates = model(spikes, labels)
+
+                    all_loss.append(loss)
+                    heldin_loss.append(loss[:,:, :-heldout_spikes.size(-1)])
+                    heldout_loss.append(loss[:,:, -heldout_spikes.size(-1):])
+
+                    eval_rates.append(rates)
+                    eval_hi_spikes.append(spikes[:,:, :-heldout_spikes.size(-1)])
+                    eval_ho_spikes.append(heldout_spikes)
+
+            eval_hi_rates = torch.cat([i[:,:, :-heldout_spikes.size(-1)] for i in eval_rates], dim=0).exp().cpu().numpy()
+            eval_ho_rates = torch.cat([i[:,:, -heldout_spikes.size(-1):] for i in eval_rates], dim=0).exp().cpu().numpy()
+            
+            eval_hi_spikes = torch.cat(eval_hi_spikes, dim=0).cpu().numpy()
+            eval_ho_spikes = torch.cat(eval_ho_spikes, dim=0).cpu().numpy() 
+
+            all_masked_loss = torch.cat([i[labels != 100] for i in all_loss], dim=0).cpu().numpy()
+            heldin_masked_loss = torch.cat([i[labels[:,:, :-heldout_spikes.size(-1)] != 100] for i in heldin_loss], dim=0).cpu().numpy()
+            heldout_masked_loss = torch.cat([i[labels[:,:, -heldout_spikes.size(-1):] != 100] for i in heldout_loss], dim=0).cpu().numpy()
+
+            all_lt_loss = torch.cat([i[:, -1, :] for i in all_loss], dim=0).cpu().numpy()
+            heldin_lt_loss = torch.cat([i[:, -1, :] for i in heldin_loss], dim=0).cpu().numpy()
+            heldout_lt_loss = torch.cat([i[:, -1, :] for i in heldout_loss], dim=0).cpu().numpy()
+
+            hi_co_bps = float(bits_per_spike(eval_hi_rates, eval_hi_spikes))
+            ho_co_bps = float(bits_per_spike(eval_ho_rates, eval_ho_spikes))
+            
+            hi_lt_co_bps = float(bits_per_spike(np.expand_dims(eval_hi_rates[:, -1, :], axis=-2), np.expand_dims(eval_hi_spikes[:, -1, :], axis=-2)))
+            ho_lt_co_bps = float(bits_per_spike(np.expand_dims(eval_ho_rates[:, -1, :], axis=-2), np.expand_dims(eval_ho_spikes[:, -1, :], axis=-2)))
+            
+            # Save current model if it scores higher than the max_co_bps and is past the save_min_bps
+            if (config['setup']['save_model'] and
+                ho_lt_co_bps > config['setup']['save_min_bps'] and
+                ho_lt_co_bps > max_lt_co_bps
+            ):
+                torch.save(model, save_path+'best_lt_co_bps.pt')
+                max_lt_co_bps = ho_lt_co_bps
+                es_counter = 0
+
+            else: es_counter += 1
+
+            results_dict = {
+                'epoch': epoch,
+                'all_masked_loss': np.mean(all_masked_loss),
+                'heldin_masked_loss': np.mean(heldin_masked_loss),
+                'heldout_masked_loss': np.mean(heldout_masked_loss),
+                'all_lt_loss': np.mean(all_lt_loss),
+                'heldin_lt_loss': np.mean(heldin_lt_loss),
+                'heldout_lt_loss': np.mean(heldout_lt_loss),
+                'hi_co_bps': hi_co_bps,
+                'ho_co_bps': ho_co_bps,
+                'hi_lt_co_bps': hi_lt_co_bps,
+                'ho_lt_co_bps': ho_lt_co_bps
+            }
+
+            # Update the report above the progress bar and upload to wandb
+            upload_print_results(config, results_dict, progress_bar, save_path, fold)
+
+            # If co-bps is lower than the es_min_bps, then stop the training
+            if (es_counter >=  config['train']['es_patience'] or (
+                config['train']['early_stopping'] and
+                epoch > config['train']['epochs'] * config['train']['es_chk_pnt'] and
+                ho_lt_co_bps < config['train']['es_min_bps']
+            )):
+                for i in range(3):
+                    progress_bar.display(' '*progress_bar.ncols, pos=0) # flush the screen
+                progress_bar.close()
+                print('\n\n! Early Stopping !\n')
+                break
+
+        progress_bar.update(1)
+    progress_bar.display('', pos=2)
+    progress_bar.close()
+    print('\nTraining Complete.\n')
+    
+    # Save the last.pt model
+    if config['setup']['save_model']:
+        torch.save(model, save_path+'last.pt')
+        print('Saved best.pt & last.pt to: '+save_path)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('\n\nInterrupted')
+        wandb_cleanup()
+
 
 # def run_cv_single(config, device, name):
 #     '''Trains a single model according to config using the train function.
@@ -283,224 +520,3 @@ def run_training(config, device, name):
 #         del model
 #         del dataset
 #         torch.cuda.empty_cache()
-    
-
-def add_sweep_agent(config, id=None):
-    '''Adds an agent to a wandb sweep. If no id is supplied then prompt the user
-    to choose from all current sweeps.
-
-    Args:
-        config (dict): The config to be used.
-        id (str, Optional): The id of the sweep to add this agent to.
-    '''
-    if not id: # prompt the user from all current sweeps
-        file_list = glob('./wandb/sweep*')
-        id = ''
-        id_list = []
-        options = 1
-        if len(file_list) > 1:
-            for file in file_list:
-                last_edit = time.strftime("%m/%d/%y %I:%M%p", time.localtime(os.path.getctime(file)))
-                sweep_id = file.split('/')[-1].split('-')[-1]
-                id_list.append(sweep_id)
-                print(str(options)+': '+sweep_id+' - '+last_edit)
-                options+=1
-            chosen_index = input('\nWhich sweep ID should the sweep agent use? (1-'+str(len(id_list))+'): ')
-            while int(chosen_index) not in range(1,len(id_list)+1):
-                chosen_index = input('\nPlease enter a number between 1 and '+str(len(id_list))+': ')
-            id = id_list[int(chosen_index)-1]
-        else:
-            id = file_list[0].split('/')[-1].split('-')[-1]
-
-    print('Adding agent to sweep with ID:', id+'\n')
-
-    call = ["wandb", "agent", f'{id}']
-    if config['train']['sweep_type'] != 'grid':
-        call.insert(2, '--count')
-        call.insert(3, f'{config["train"]["sweep_epochs"]}')
-
-    with subprocess.Popen(call) as p:
-        try:
-            return p.wait()
-        except:  
-            p.send_signal(signal.SIGINT)
-            p.wait()
-
-
-def train(model, train_dataloader, val_dataloader, device, fold=''):
-    ''' The train function used by all training types (single, sweep).
-
-    Args:
-        model (Transformer): The model to be trained.
-        train_dataloader (DataLoader): Training set DataLoader.
-        val_dataloader (DataLoader): Validation set DataLoader.
-        device (torch.device): torch.device object containing the GPU to train
-                               on.
-    '''
-    scaler = torch.cuda.amp.GradScaler()
-    config = model.config
-
-    # If the model needs to log then create a folder for it.
-    log_local = config['wandb']['log_local'] and not config['wandb']['log']
-
-    save_path = setup_runs_folder(config, model, 'train') if (
-        config['setup']['save_model'] or log_local) else None
-
-    optimizer = get_optimizer(model, config)
-    scheduler = get_scheduler(optimizer, config)
-    # scheduler = get_scheduler(optimizer, config, len(train_dataloader))
-
-    max_co_bps = float('-inf') # used to get the best.pt model
-    max_lt_co_bps = float('-inf') # used to get the best.pt model
-
-    # The progress bar shows how much time is remaining and current report
-    progress_bar = print_run_get_prog_bar(config, model, wandb if (
-        config['wandb']['log']) else None)
-
-    es_counter = 0
-
-    # Each epoch is a single pass through the entire dataset.
-    for epoch in range(config['train']['epochs']):
-        model.train() # sets the dropout to on
-
-        expand_prob = min( # probability to expand mask across multiple timesteps, increases starting at ramp_start epochs
-            (epoch - config['train']['ramp_start']) /
-            (config['train']['ramp_end'] - config['train']['ramp_start']),
-            1
-        
-        )
-        # Each step is one batch
-        for step, (spikes, heldout_spikes) in enumerate(train_dataloader):
-
-            # preprocess_batch zero masks, randomizes, and sets the labels for masked and unmaksed
-            masked_spikes, labels = model.preprocess_batch(
-                spikes, # B, T, N
-                expand_prob,
-                heldout_spikes, # B, T, N
-            )
-
-            # Dont need rates only loss
-            with torch.cuda.amp.autocast():
-                masked_loss, _ = model(masked_spikes, labels)
-                loss = masked_loss.mean()
-
-            if config['wandb']['log']:
-                wandb.log({f'train loss{fold}': loss, 't_epochs':epoch})
-                
-            scaler.scale(loss).backward()
-
-            nn.utils.clip_grad_norm_(
-                model.parameters(),
-                config['train']['max_grad_norm'])
-
-            scaler.step(optimizer)
-            scaler.update()
-
-            optimizer.zero_grad(set_to_none=True)
-
-        if scheduler != None:
-            scheduler.step()
-            if config['wandb']['log']:
-                wandb.log({f'lr{fold}':scheduler.optimizer.param_groups[0]['lr'], 't_epochs':epoch})
-
-        # Run on the validation set every 'val_interval' epochs
-        if (epoch % config['train']['val_interval'] == 0 and
-            val_dataloader != None
-        ):
-            model.eval() # turns off dropout
-
-            all_loss, heldout_loss, heldin_loss = [], [], []
-            eval_rates, eval_ho_spikes = [], []
-
-            results_dict = {}
-
-            for step, (spikes, heldout_spikes) in enumerate(val_dataloader):
-                with torch.no_grad():
-                    labels = spikes.clone()
-                    labels = torch.cat([labels, heldout_spikes], -1)
-                    spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes, device=device)], -1)
-
-                    loss, rates = model(spikes, labels)
-                    all_loss.append(loss)
-                    eval_rates.append(rates)
-                    eval_ho_spikes.append(heldout_spikes)
-
-                    heldout_masked = labels.clone()
-                    heldout_masked[:,:,:-heldout_spikes.size(-1)] = -100
-                    ho_loss, ho_rates = model(spikes, heldout_masked)
-                    heldout_loss.append(ho_loss)
-
-                    heldin_masked = labels.clone()
-                    heldin_masked[:,:, -heldout_spikes.size(-1):] = -100
-                    hi_loss = model(spikes, heldin_masked)[0]
-                    heldin_loss.append(hi_loss)
-
-            eval_rates = torch.cat(eval_rates, dim=0).exp() # turn into tensor and use exponential on rates
-
-            eval_ho_spikes = torch.cat(eval_ho_spikes, dim=0).cpu().numpy() # turn into tensor
-
-            all_loss = torch.cat(all_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
-            heldout_loss = torch.cat(heldout_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
-            heldin_loss = torch.cat(heldin_loss, dim=0).cpu().numpy() # send to cpu and convert to numpy
-
-            hldt_splt = [model.n_heldin, heldout_spikes.size(-1)]
-            eval_rates_heldout = torch.split(eval_rates, hldt_splt, -1)[1].cpu().numpy()
-
-            co_bps = float(bits_per_spike(eval_rates_heldout, eval_ho_spikes))
-            lt_co_bps = float(bits_per_spike(np.expand_dims(eval_rates_heldout[:, -1, :], axis=-2), np.expand_dims(eval_ho_spikes[:, -1, :], axis=-2)))
-            val_loss = np.mean(all_loss)
-
-            # Save current model if it scores higher than the max_co_bps and is past the save_min_bps
-            if (config['setup']['save_model'] and
-                lt_co_bps > config['setup']['save_min_bps'] and
-                lt_co_bps > max_lt_co_bps
-            ):
-                torch.save(model, save_path+'best_lt_co_bps.pt')
-                max_lt_co_bps = lt_co_bps
-                es_counter = 0
-
-            else: es_counter += 1
-
-            results_dict = {
-                'epoch': epoch,
-                'val_loss': val_loss,
-                'heldout_loss': np.mean(heldout_loss),
-                'co_bps': co_bps,
-                'lt_co_bps': lt_co_bps,
-                'forward_loss': 0,
-                'heldin_loss': np.mean(heldin_loss),
-            }
-            results_dict
-
-            # Update the report above the progress bar and upload to wandb
-            upload_print_results(config, results_dict, progress_bar, save_path, fold)
-
-            # If co-bps is lower than the es_min_bps, then stop the training
-            if (es_counter >=  config['train']['es_patience'] or (
-                config['train']['early_stopping'] and
-                epoch > config['train']['epochs'] * config['train']['es_chk_pnt'] and
-                co_bps < config['train']['es_min_bps']
-            )):
-                for i in range(3):
-                    progress_bar.display(' '*progress_bar.ncols, pos=0) # flush the screen
-                progress_bar.close()
-                print('\n\n! Early Stopping !\n')
-                break
-
-        progress_bar.update(1)
-    progress_bar.display('', pos=2)
-    progress_bar.close()
-    print('\nTraining Complete.\n')
-    
-    # Save the last.pt model
-    if config['setup']['save_model']:
-        torch.save(model, save_path+'last.pt')
-        print('Saved best.pt & last.pt to: '+save_path)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print('\n\nInterrupted')
-        wandb_cleanup()

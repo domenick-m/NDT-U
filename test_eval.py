@@ -7,6 +7,9 @@ import torch.nn as nn
 import shutil
 import warnings
 import wandb
+import math
+import torch
+import torch.nn as nn
 import fileinput
 import numpy as np
 import pandas as pd
@@ -73,6 +76,8 @@ def eval_mc_rtt(config, model, local_save):
         config["train"]["lag"]
     )
 
+    model.eval()
+
     device = torch.device('cuda:0')
     set_seeds(config)
 
@@ -105,6 +110,7 @@ def eval_mc_rtt(config, model, local_save):
 
             del spikes
             del heldout_spikes
+            torch.cuda.empty_cache()
 
         trial_pcs = run_pca(normed_rates)
         trial_c_smth_pcs = run_pca(normed_c_smth_rates)
@@ -121,14 +127,21 @@ def eval_mc_rtt(config, model, local_save):
 
     ### DATA ###
 
+    batch_size = config['train']['e_batch_size']
+
     ## Full Train Dataset
     spikes = torch.Tensor(h5dict['all_train_spikes_heldin']).to(device)
     heldout_spikes = torch.Tensor(h5dict['all_train_spikes_heldout']).to(device)
     with torch.no_grad():
         spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes)], -1)
-        train_rates = model(spikes)[:, -1, :].exp().cpu().numpy()
+        num_batches = math.ceil(spikes.size()[0]/batch_size)
+        train_rates = []
+        for batch in [spikes[batch_size*y:batch_size*(y+1),:,:] for y in range(num_batches)]:
+            train_rates.append(model(batch)[:, -1, :].exp().cpu().numpy())
     del spikes
     del heldout_spikes
+    torch.cuda.empty_cache()
+    train_rates = np.concatenate(train_rates, 0)
     acaus_smth_train_rates = smooth_spikes(train_rates, config['train']['smth_std'], 10, causal=False)
     caus_smth_train_rates = smooth_spikes(train_rates, config['train']['smth_std'], 10, causal=True)
 
@@ -137,9 +150,14 @@ def eval_mc_rtt(config, model, local_save):
     heldout_spikes = torch.Tensor(h5dict['test_spikes_heldout']).to(device)
     with torch.no_grad():
         spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes)], -1)
-        test_rates = model(spikes)[:, -1, :].exp().cpu().numpy()
+        num_batches = math.ceil(spikes.size()[0]/batch_size)
+        test_rates = []
+        for batch in [spikes[batch_size*y:batch_size*(y+1),:,:] for y in range(num_batches)]:
+            test_rates.append(model(batch)[:, -1, :].exp().cpu().numpy())
     del spikes
     del heldout_spikes
+    torch.cuda.empty_cache()
+    test_rates = np.concatenate(test_rates, 0)
     acaus_smth_test_rates = smooth_spikes(test_rates, config['train']['smth_std'], 10, causal=False)
     caus_smth_test_rates = smooth_spikes(test_rates, config['train']['smth_std'], 10, causal=True)
 
@@ -218,11 +236,6 @@ def eval_mc_rtt(config, model, local_save):
     ### DECODING ###
 
     def get_cobps(rates, spikes):
-        # print(np.expand_dims(np.concatenate(rates, axis=0), axis=1)[98:].shape)
-        # print(np.array([i[-1:, :] for i in spikes]).shape)
-        # # print(np.array([i for i in rates]).shape)
-        # print(np.expand_dims(rates[:, 98:], axis=1).shape)
-        # print(spikes.shape)
         return float(bits_per_spike(
             np.expand_dims(np.concatenate(rates, axis=0), axis=1)[:, :, 98:], 
             np.array([i[-1:, :] for i in spikes])

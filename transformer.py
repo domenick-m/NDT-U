@@ -267,9 +267,11 @@ class Transformer(Module):
         if labels == None: return pred_rates
 
         loss = self.classifier(pred_rates, labels)
-        masked_loss = loss[:, -1, :] if self.config['train']['lt_loss_only'] else loss[labels != -100]
-        final_loss = masked_loss.mean()
-        return final_loss.unsqueeze(0), pred_rates
+
+        # lt_loss = loss[:, -1, :].mean()
+        # masked_loss = loss[labels != -100].mean()
+
+        return loss, pred_rates
 
     def get_attn_mask(self, src):
         ''' Gets attention mask stored on memory or creates a new one.
