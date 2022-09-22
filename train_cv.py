@@ -219,12 +219,12 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
     # Init values to keep track of best val score
     max_co_bps = float('-inf') # used to get the best.pt model
     max_lt_co_bps = float('-inf') # used to get the best.pt model
+    es_counter = 0
 
     # The progress bar shows how much time is remaining and current report
     progress_bar = print_run_get_prog_bar(config, model, wandb if (
         config['wandb']['log']) else None)
 
-    es_counter = 0
 
     # Each epoch is a single pass through the entire dataset.
     for epoch in range(config['train']['epochs']):
@@ -325,13 +325,11 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
             ho_lt_co_bps = float(bits_per_spike(np.expand_dims(eval_ho_rates[:, -1, :], axis=-2), np.expand_dims(eval_ho_spikes[:, -1, :], axis=-2)))
             
             # Save current model if it scores higher than the max_co_bps and is past the save_min_bps
-            if (config['setup']['save_model'] and
-                ho_lt_co_bps > config['setup']['save_min_bps'] and
-                ho_lt_co_bps > max_lt_co_bps
-            ):
-                torch.save(model, save_path+'best_lt_co_bps.pt')
+            if ho_lt_co_bps > max_lt_co_bps:
                 max_lt_co_bps = ho_lt_co_bps
                 es_counter = 0
+                if config['setup']['save_model'] and ho_lt_co_bps > config['setup']['save_min_bps']:
+                    torch.save(model, save_path+'best_lt_co_bps.pt')
 
             else: es_counter += 1
 
