@@ -75,7 +75,7 @@ def main():
 
     # Add an agent to a wandb sweep
     if '--add' in arg_dict:
-        add_sweep_agent(config, arg_dict['id'])
+        add_sweep_agent(config)
         exit()
 
     # Run a wandb sweep
@@ -151,7 +151,7 @@ def add_sweep_agent(config, id=None):
         config (dict): The config to be used.
         id (str, Optional): The id of the sweep to add this agent to.
     '''
-    if not id: # prompt the user from all current sweeps
+    if id == None: # prompt the user from all current sweeps
         file_list = glob('./wandb/sweep*')
         id = ''
         id_list = []
@@ -172,7 +172,12 @@ def add_sweep_agent(config, id=None):
 
     print('Adding agent to sweep with ID:', id+'\n')
 
-    call = ["wandb", "agent", f'{id}']
+    call = [
+        "wandb", "agent", 
+        "-p", f"{config['wandb']['project']}", 
+        "-e", f"{config['wandb']['entity']}", 
+        f'{id}'
+    ]
     if config['train']['sweep_type'] != 'grid':
         call.insert(2, '--count')
         call.insert(3, f'{config["train"]["sweep_epochs"]}')
