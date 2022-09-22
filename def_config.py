@@ -43,17 +43,17 @@ config.train.e_batch_size = 2048 # Number of samples to compute loss with
 config.train.epochs = 50000 # Number of full passes through dataset
 
 config.train.val_interval = 20 # Epochs between running on the validation set
-config.train.val_type = 'random' # ['random', 'last', 'cross_val']
+config.train.val_type = 'cross_val' # ['random', 'last', 'cross_val']
 config.train.n_folds = 5 # Number of folds (K) to use with K-folds cv
 
 config.train.sweep_enabled = False # Whether or not wandb hyperparameter sweep is enabled, if False running train.py will train a single model
 config.train.sweep_type = 'random' # ['grid', 'random'] Which wandb sweep type to use when sweep is enabled, grid is every combination of the sweep values, and random is random combinations of the sweep values
-config.train.sweep_epochs = 2 # Number of models that should be trained if sweep_type is random
+config.train.sweep_epochs = 99999 # Number of models that should be trained if sweep_type is random
 
 config.train.early_stopping = True # Whether or not the model stops training due to low co-bps
 config.train.es_min_bps = 0.0 # The point at which a model will be early stopped if it's co-bps score falls below this
 config.train.es_chk_pnt = 0.75 # When should the model start checking if it should early stop, 0.5 = halfway through the total epochs it will starting checking if co-bps falls below es_min_bps
-config.train.es_patience = 500
+config.train.es_patience = 350
 
 config.train.lt_loss_only = False
 config.train.init_lr = 0.001 # The initial learning rate to be used by the optimizer
@@ -114,12 +114,20 @@ config.wandb.silent = True # ['true', 'false'] If 'true' wandb does not print an
 '''
 config.wandb.sweep = CN()
 config.wandb.sweep.setup = CN()
+
 config.wandb.sweep.train = CN()
-config.wandb.sweep.train.warmup_steps = [10, 50, 100, 250, 500, 1000, 2500]
-config.wandb.sweep.train.weight_decay = [1.000e-5, 1.000e-6, 1.000e-7, 1.000e-8, 1.000e-9]
-config.wandb.sweep.train.init_lr = [0.015, 0.01, 0.005]
+config.wandb.sweep.train.warmup_steps = [100, 1000, 2500, 5000]
+config.wandb.sweep.train.weight_decay = [5.0e-04, 5.0e-05, 5.0e-06]
+config.wandb.sweep.train.init_lr = [0.0001, 0.0005, 0.001, 0.005]
+
 config.wandb.sweep.model = CN()
 config.wandb.sweep.model.undivided_attn = [True, False]
-config.wandb.sweep.model.hidden_size = [256, 200, 128, 98, 64]
-config.wandb.sweep.model.context_forward = [1, 3, 5]
-config.wandb.sweep.model.context_backward = [3, 5, 7, 12, 15]
+config.wandb.sweep.model.n_heads = [2, 5]
+config.wandb.sweep.model.hidden_size = [32, 64, 128, 256]
+config.wandb.sweep.model.dropout = [0.3, 0.4, 0.5, 0.6, 0.7]
+config.wandb.sweep.model.dropout_rates = [0.3, 0.4, 0.5, 0.6, 0.7]
+config.wandb.sweep.model.dropout_embedding = [0.3, 0.4, 0.5, 0.6, 0.7]
+config.wandb.sweep.model.dropout_attention = [0.3, 0.4, 0.5, 0.6, 0.7]
+config.wandb.sweep.model.context_forward = [10, 20, 30]
+config.wandb.sweep.model.context_backward = [10, 20, 30]
+config.wandb.sweep.model.normal_init = [True, False]
