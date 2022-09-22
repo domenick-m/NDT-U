@@ -53,7 +53,7 @@ config.train.sweep_epochs = 99999 # Number of models that should be trained if s
 config.train.early_stopping = True # Whether or not the model stops training due to low co-bps
 config.train.es_min_bps = 0.0 # The point at which a model will be early stopped if it's co-bps score falls below this
 config.train.es_chk_pnt = 0.75 # When should the model start checking if it should early stop, 0.5 = halfway through the total epochs it will starting checking if co-bps falls below es_min_bps
-config.train.es_patience = 350
+config.train.es_patience = 250
 
 config.train.lt_loss_only = False
 config.train.init_lr = 0.001 # The initial learning rate to be used by the optimizer
