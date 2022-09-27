@@ -15,37 +15,61 @@ from torch.nn import Transformer, TransformerEncoder, TransformerEncoderLayer
 #────#
 from utils import get_norm
 '''───────────────────────────── transformer.py ─────────────────────────────'''
-# This file contains the NDT-U model.
+# This is a test 
 
-class MHA(Module):
+
+class DMHA(Module):
+    # USES DISENTAGLED ATTENTION
+    #   Pos embeddings are not added. 
+    #   Attention is now computed 4 different times and the outputs are 
+    #   concatnated in the channel dim and fed through linear layer. Those
+    #   4 outputs are:
+    #       Content x Content - Q:spikes K:spikes V:spikes (same as before but w/o pos_emb added)
+    #       Content x Position - Q:spikes K:Position V:spikes 
+    #       Position x Content - Q:Position K:spikes V:spikes 
+    #       Position x Position - Q:Position K:Position V:spikes 
+
+    # This is an extremely inefficient implementation -- BEWARE
+
     def __init__(self, config, n_neurons):
-        super(MHA, self).__init__()
+        super(DMHA, self).__init__()
         self.config = config
 
         # If using undivided attention, each head needs 'input_dim' dimensions
-        self.packed_dim_size = n_neurons * config['model']['n_heads'] if (
+        self.dim_size = n_neurons * config['model']['n_heads'] if (
             config['model']['undivided_attn']
         ) else n_neurons
 
-        # MHA uses a packed tensor, Queries Keys and Values all share the same weight matrix
-        self.in_proj_weight = Parameter(torch.empty((3 * self.packed_dim_size, n_neurons)))
-        self.in_proj_bias = Parameter(torch.empty(3 * self.packed_dim_size))
-        self.out_proj = NDQL(self.packed_dim_size, n_neurons)
+        self.v_weight = Parameter(torch.empty((self.dim_size, n_neurons)))
+        self.q_weight = Parameter(torch.empty((self.dim_size, n_neurons)))
+        self.k_weight = Parameter(torch.empty((self.dim_size, n_neurons)))
+        self.q_bias = Parameter(torch.empty(self.dim_size))
+        self.k_bias = Parameter(torch.empty(self.dim_size))
+        self.v_bias = Parameter(torch.empty(self.dim_size))
+        self.out_proj = NDQL(self.dim_size, n_neurons)
 
         # Init QKV weights and all biases
-        xavier_uniform_(self.in_proj_weight)
-        constant_(self.in_proj_bias, 0.)
+        xavier_uniform_(self.v_weight)
+        xavier_uniform_(self.q_weight)
+        xavier_uniform_(self.k_weight)
+        constant_(self.q_bias, 0.)
+        constant_(self.k_bias, 0.)
+        constant_(self.v_bias, 0.)
         constant_(self.out_proj.bias, 0.)
 
-    def forward(self, src, attn_mask=None):
+    def forward(self, src, attn_mask=None, src_q=None, src_k=None):
+        if src_q == None: src_q = src
+        if src_k == None: src_k = src
         # Use the same weight matrix then seperate 
-        self.q, self.k, self.v = torch._C._nn.linear(src, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
+        self.q = torch._C._nn.linear(src_q, self.q_weight, self.q_bias)
+        self.k = torch._C._nn.linear(src_k, self.k_weight, self.k_bias)
+        self.v = torch._C._nn.linear(src, self.v_weight, self.v_bias)
 
         # If using undivided attention the view shape is [T x (B * n_heads) x N]
         self.view_shape = (src.shape[0], src.shape[1] * self.config['model']['n_heads'], src.shape[2]) if (
             self.config['model']['undivided_attn']
         ) else (
-            # If using standard MHA the view shape is [T x (B * n_heads) x (N // n_heads)]
+            # If using standard DMHA the view shape is [T x (B * n_heads) x (N // n_heads)]
             (src.shape[0], src.shape[1] * self.config['model']['n_heads'], src.shape[2] // self.config['model']['n_heads'])
         )
         self.q = self.q.contiguous().view(*self.view_shape).transpose(0, 1) / math.sqrt(self.view_shape[2])
@@ -66,7 +90,7 @@ class MHA(Module):
         
         # Multiply attention matrix (QK) and values (V)
         self.attn_output = torch.bmm(self.attn, self.v).transpose(0, 1)
-        self.attn_output = self.attn_output.contiguous().view(src.shape[0] * src.shape[1], self.packed_dim_size)
+        self.attn_output = self.attn_output.contiguous().view(src.shape[0] * src.shape[1], self.dim_size)
 
         # Project to proper size ([T x B x N]) and return
         return torch._C._nn.linear(self.attn_output, self.out_proj.weight, self.out_proj.bias).view(*src.shape)
@@ -95,8 +119,16 @@ class EncoderLayer(TransformerEncoderLayer):
             dropout=config['model']['dropout'],
             activation=config['model']['activation']
         )
-        self.self_attn = MHA(config, n_neurons)
-        # self.self_attn = UndividedMultiheadAttention(config, n_neurons)
+        self.self_attn_cc = DMHA(config, n_neurons)
+        self.self_attn_cp = DMHA(config, n_neurons)
+        self.self_attn_pc = DMHA(config, n_neurons)
+        self.self_attn_pp = DMHA(config, n_neurons)
+
+        dim_size = n_neurons * config['model']['n_heads'] if (
+            config['model']['undivided_attn']
+        ) else n_neurons
+
+        self.dis_attn_lin = nn.Linear(n_neurons * 4, n_neurons)
 
         self.norm1 = get_norm(config, n_neurons)
         self.norm2 = get_norm(config, n_neurons)
@@ -116,7 +148,7 @@ class EncoderLayer(TransformerEncoderLayer):
                 temp_state_dic[name] = self.state_dict()[name]
         self.load_state_dict(temp_state_dic)
 
-    def forward(self, src, attn_mask=None):
+    def forward(self, src, attn_mask=None, pos_emb=None):
         '''Forward pass.
 
         Args:
@@ -126,7 +158,17 @@ class EncoderLayer(TransformerEncoderLayer):
         '''
         residual = src
         src = self.norm1(src)
-        src2 = self.self_attn(src, attn_mask)
+        # src2 = self.self_attn(src, attn_mask)
+
+        pos_emb = pos_emb.repeat(1, src.shape[1], 1)
+
+        cc = self.self_attn_cc(src, attn_mask, src, src)
+        cp = self.self_attn_cp(src, attn_mask, src, pos_emb)
+        pc = self.self_attn_cp(src, attn_mask, pos_emb, src)
+        pp = self.self_attn_pp(src, attn_mask, pos_emb, pos_emb)
+
+        src2 = self.dis_attn_lin(torch.cat([cc, cp, pc, pp], -1))
+
         src= residual + self.dropout1(src2)
 
         residual = src
@@ -158,11 +200,11 @@ class Encoder(Module):
         self.layers = ModuleList([copy.deepcopy(encoder_layer) for i in range(n_layers)])
         self.norm = get_norm(config, n_neurons)
 
-    def forward(self, src, attn_mask=None):
+    def forward(self, src, attn_mask=None, pos_emb=None):
         ''' PlaceHolder
         '''
         for layer in self.layers: # send through each EncoderLayer's forward()
-            src = layer(src, attn_mask)
+            src = layer(src, attn_mask, pos_emb)
         if self.norm is not None: # final norm
             src = self.norm(src)
         return src
@@ -207,7 +249,7 @@ class Transformer(Module):
         self.name = name
 
         self.n_heldin = dataset.n_heldin
-        self.n_neurons = dataset.n_neurons if config['train']['heldout'] else dataset.n_heldin
+        self.n_neurons = dataset.n_neurons
         self.seq_len = config['train']['seq_len']
         self.max_train_spks = dataset.max_train_spks
 
@@ -223,7 +265,7 @@ class Transformer(Module):
 
         encoder_layer = EncoderLayer(config, self.n_neurons, self.seq_len)
         self.encoder = Encoder(config, self.n_neurons, encoder_layer, self.seq_len)
-        self.decoder = nn.Linear(self.n_neurons, self.n_neurons)
+        self.decoder = nn.Linear(self.n_neurons, dataset.n_neurons)
 
         self.attn_mask = None
         self.loss_prob_mask = None
@@ -256,11 +298,11 @@ class Transformer(Module):
             spikes = torch.clamp(spikes, max=self.max_train_spks)
 
         spikes = spikes.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
-        spikes += self.pos_embedding(self.pe)
+        # spikes += self.pos_embedding(self.pe)
         spikes = self.embedding_dropout(spikes)
 
         attn_mask = self.get_attn_mask(spikes) # [T, T]
-        output = self.encoder(spikes, attn_mask)
+        output = self.encoder(spikes, attn_mask, self.pos_embedding(self.pe))
         output = self.rate_dropout(output)
 
         pred_rates = self.decoder(output).permute(1, 0, 2)  # [T x B x N] ->  [B x T x N]
@@ -353,8 +395,7 @@ class Transformer(Module):
         batch[indices_randomized] = random_spikes.float()[indices_randomized]
 
         # Add fake heldout and forward
-        if config['train']['heldout']:
-            batch = torch.cat([batch, torch.zeros_like(heldout_spikes)], -1)
-            labels = torch.cat([labels, heldout_spikes], -1)
+        batch = torch.cat([batch, torch.zeros_like(heldout_spikes)], -1)
+        labels = torch.cat([labels, heldout_spikes], -1)
 
         return batch, labels

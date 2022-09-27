@@ -23,7 +23,7 @@ config.setup.data_dir = 'data/' # Where each datasets .h5 file is stored
 config.setup.save_dir = 'runs/' # Where the train and test output data should be stored
 
 config.setup.save_model = True # If True, save the best (co-bps on val set) model and the model after fully training
-config.setup.save_min_bps = -100.0 # Best model will not be saved until it reaches this point, set high to avoid saving too often
+config.setup.comp_metric = 'lt_nll' # ['lt_nll', 'lt_co_bps']
 config.setup.log_eps = 1e-8 # The epsilon to be added to log, should be really small
 
 '''
@@ -32,6 +32,8 @@ config.setup.log_eps = 1e-8 # The epsilon to be added to log, should be really s
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.train = CN()
+config.train.heldout = True
+
 config.train.seq_len = 30 # -1 is full trial, above 0 is sliding window (trials are chopped to that value)
 config.train.overlap = 25 #
 
@@ -51,8 +53,6 @@ config.train.sweep_type = 'random' # ['grid', 'random'] Which wandb sweep type t
 config.train.sweep_epochs = 99999 # Number of models that should be trained if sweep_type is random
 
 config.train.early_stopping = True # Whether or not the model stops training due to low co-bps
-config.train.es_min_bps = 0.0 # The point at which a model will be early stopped if it's co-bps score falls below this
-config.train.es_chk_pnt = 0.75 # When should the model start checking if it should early stop, 0.5 = halfway through the total epochs it will starting checking if co-bps falls below es_min_bps
 config.train.es_patience = 250
 
 config.train.lt_loss_only = False
@@ -105,7 +105,7 @@ config.model.context_backward = 25 # How many timesteps in the past can a timest
 config.wandb = CN()
 config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.entity = 'emory-bg2' # The wandb project the run should be stored in
-config.wandb.project = 'mc_rtt' # The wandb project the run should be stored in
+config.wandb.project = 'deberta_test' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 config.wandb.log_local = True # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt'
 config.wandb.silent = False # ['true', 'false'] If 'true' wandb does not print anything

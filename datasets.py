@@ -287,8 +287,8 @@ class Dataset(data.Dataset):
         '''
         return (
             self.spikes_heldin[index],
-            self.spikes_heldout[index],
-        ) 
+            self.spikes_heldout[index]
+        )
 
     def clip_max(self, max, indicies):
         self.spikes_heldin[indicies] = torch.clamp(self.spikes_heldin[indicies], max=max)
@@ -296,9 +296,6 @@ class Dataset(data.Dataset):
     def get_dataloader(self, generator, shuffle=True):
         return data.DataLoader(self,
             batch_size=self.config['train']['batch_size'],
-            # batch_size=(
-            #     self.config['train']['batch_size'] if self.mode == 'train' else 4096
-            # ),
             generator=generator,
             shuffle=shuffle)
 

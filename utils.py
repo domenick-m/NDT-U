@@ -7,6 +7,7 @@ import math
 import random
 import subprocess
 import signal
+import copy
 from glob import glob
 from distutils.util import strtobool
 #────#
@@ -37,6 +38,29 @@ from def_config import config
    ║                              CONFIG UTILS                              ║
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
+def bits_per_spike(rates, spikes):
+    nll_model = nn.functional.poisson_nll_loss(rates, spikes, log_input=False, full=True, reduction='sum')
+    nll_null = nn.functional.poisson_nll_loss(torch.mean(spikes, dim=(0,1), keepdim=True).tile((spikes.shape[0], spikes.shape[1], 1)), spikes, log_input=False, full=True, reduction='sum')
+    return (nll_null - nll_model) / spikes.sum() / 0.6931471805599453
+
+def metric_comparison(config, comp_met_val=None, results_dict=None):
+    comp_metric = config['setup']['comp_metric']
+    if results_dict != None and 'val '+comp_metric in results_dict:
+        val = results_dict['val '+comp_metric] 
+
+    # Minimize Metric
+    if comp_metric in ['lt_nll', 'msk_nll', 'hi_msk_nll', 'ho_msk_nll', 'hi_lt_nll', 'ho_lt_nll']:
+        # Return value to init w/ or return improvement bool, overwrite val, and comp metric
+        return float('inf') if comp_met_val == None else (val < comp_met_val, val, comp_metric)
+
+    # Maximize Metric
+    elif comp_metric in ['ho_lt_co_bps', 'hi_lt_co_bps', 'ho_co_bps', 'hi_co_bps']:
+        return float('-inf') if comp_met_val == None else (val > comp_met_val, val, comp_metric)
+
+    else:
+        print('\nInvalid Comparison Metric!\n')
+        exit()
+
 def get_run_name(config, name):
     if name is None: # this means nothing was passed to name CLI arg
         log_local = config['wandb']['log_local'] and not config['wandb']['log']
@@ -167,18 +191,6 @@ def get_config_types():
         type_dict[key] = type(value)
     return type_dict
 
-def reset_wandb_env():
-    exclude = {
-        "WANDB_PROJECT",
-        "WANDB_ENTITY",
-        "WANDB_API_KEY",
-        # "WANDB_SWEEP_ID",
-        # "WANDB_SWEEP_PARAM_PATH"
-    }
-    for k, v in os.environ.items():
-        if k.startswith("WANDB_") and k not in exclude:
-            del os.environ[k]
-
 def set_device(config):
     ''' Sets torch device according to config.setup.gpu_idx, -1 will auto-select
     the GPU with the least memory usage.
@@ -285,7 +297,6 @@ def setup_runs_folder(config, model, mode):
     #         f.write(wandb.run.id)
     return path+'/'
 
-import time
 def wandb_cleanup():
     '''Deletes the run folder after it's been uploaded.
 
@@ -502,7 +513,7 @@ def parse_args(args):
             print(' --name name        assigns given name to the run, used in wandb and when saving')
             print(' --{CFG KEY} value  can change any setting in the config to the supplied value')
             print('\nexample:\n train.py -y --dataset area2_bump')
-            exit()# NOTE:
+            exit()
         elif arg in ['-y', '--add', '--kill', '--sweep', '--default']:
             arg_dict[arg] = True
         elif arg == '--name':
@@ -567,7 +578,7 @@ def print_run_get_prog_bar(config, model, wandb=None):
         bar_format=bar_format
     )
 
-def upload_print_results(config, result_dict, progress_bar, save_path, fold):
+def upload_print_results(config, report, result_dict, progress_bar, save_path, fold):
     '''Either uploads to wandb or stores locally. Also shows the report on the
     progress bar.
 
@@ -577,35 +588,25 @@ def upload_print_results(config, result_dict, progress_bar, save_path, fold):
         progress_bar (tqdm): Progress bar.
         save_path (str): Where to save locally.
     '''
-    epoch = '[Epoch: '+str(result_dict['epoch'])+']'
-    hi_loss = f'[hi loss: {result_dict["heldin_lt_loss"]:.3f}]'
-    ho_loss = f'[ho loss: {result_dict["heldout_lt_loss"]:.3f}]'
-    cobps = f'[co-bps: {result_dict["ho_co_bps"]:.3f}]'
-    ltcobps = f'[lt co-bps: {result_dict["ho_lt_co_bps"]:.3f}]'
-    report = epoch + '  ' + hi_loss + '  ' + ho_loss + '   ' + cobps + '  ' + ltcobps
-    progress_bar.display(msg=report, pos=0)
+    for idx, met in enumerate(["val lt_nll", "val msk_nll", "val ho_co_bps", "val ho_lt_co_bps"]):
+        if met in result_dict:
+            report[idx] = f'{result_dict[met]:.3f}'
 
-    if config['wandb']['log']:
-        wandb.log({
-            f'val all_masked_loss{fold}': result_dict['all_masked_loss'],
-            f'val heldin_masked_loss{fold}': result_dict['heldin_masked_loss'],
-            f'val heldout_masked_loss{fold}': result_dict['heldout_masked_loss'],
-            f'val all_lt_loss{fold}': result_dict['all_lt_loss'],
-            f'val heldin_lt_loss{fold}': result_dict['heldin_lt_loss'],
-            f'val heldout_lt_loss{fold}': result_dict['heldout_lt_loss'],
-            f'val hi_co_bps{fold}': result_dict['hi_co_bps'],
-            f'val ho_co_bps{fold}': result_dict['ho_co_bps'],
-            f'val hi_lt_co_bps{fold}': result_dict['hi_lt_co_bps'],
-            f'val ho_lt_co_bps{fold}': result_dict['ho_lt_co_bps'],
-            't_epochs':result_dict['epoch']
-        })
+    report_str = '[Epoch: {}] [lt nll: {}] [msk nll: {}] [co-bps: {}] [lt co-bps: {}]'.format(
+        result_dict['epochs'], report[0], report[1], report[2], report[3]
+    )
+        
+    progress_bar.display(msg=report_str, pos=0)
+
+    if config['wandb']['log']: 
+        wandb.log({k+fold if k != 'epochs' else 'epochs': v for k, v in result_dict.items()})
 
     elif config['wandb']['log_local']:
-        with open(save_path+'report_log.txt', 'a') as f:
-            f.write('\n'+report)
-            f.write(']\n'+' '*13+'[val heldin loss: '+ "{:.3f}".format(result_dict['heldin_loss']))
-            f.write(']  [val heldout loss: '+ "{:.3f}".format(result_dict['heldout_loss']))
-            f.write(']  [val forward loss: '+ "{:.3f}".format(result_dict['forward_loss'])+']')
+        with open(save_path+'report_log.csv', 'a') as f:
+            line = '\n'
+            for k, v in result_dict.items():
+                line += f'[{k}: {v}] '
+            f.write(line)
 
 def print_train_configs(config, args):
     ''' Prints the configs on train startup.
@@ -643,7 +644,6 @@ def print_train_configs(config, args):
         format_config('agent_gpus', config.setup.agent_gpus),
         format_config('log_eps', config.setup.log_eps),
         format_config('save_model', config.setup.save_model),
-        format_config('save_min_bps', config.setup.save_min_bps),
         '', wandb_box[0], wandb_box[1], wandb_box[2],
         format_config('entity', config.wandb.entity),
         format_config('project', config.wandb.project),
@@ -683,7 +683,6 @@ def print_train_configs(config, args):
         format_config('val_type', config.train.val_type),
         format_config('n_folds', config.train.n_folds),
         format_config('early_stopping', config.train.early_stopping),
-        format_config('es_min_bps', config.train.es_min_bps),
         format_config('es_patience', config.train.es_patience),
         format_config('optimizer', config.train.optimizer),
         format_config('scheduler', config.train.scheduler),

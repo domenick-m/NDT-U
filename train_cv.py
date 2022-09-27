@@ -15,12 +15,15 @@ import torch
 import wandb
 import numpy as np
 import torch.nn as nn
-from nlb_tools.evaluation import bits_per_spike
+from nlb_tools.evaluation import bits_per_spike as bits_per_spike2
 import subprocess
 
 # #────#
 from transformer import Transformer
+# from transformer_deberta import Transformer
 from utils import (get_config,
+                   metric_comparison,
+                   bits_per_spike,
                    get_config_dict,
                    get_config_from_file,
                    get_run_name,
@@ -28,11 +31,9 @@ from utils import (get_config,
                    parse_args,
                    set_device,
                    get_wandb_config,
-#                    plot_rates,
                    get_optimizer,
                    get_scheduler,
                    get_wandb_dir,
-                   reset_wandb_env,
                    set_sweep_config,
                    setup_runs_folder,
                    print_train_configs,
@@ -126,10 +127,10 @@ def run_training(config, device, name):
 
     if cross_val_enabled:
         for idx, train_sub_dl, val_sub_dl in val_dataloader:
-            run_name = f'{name}-{idx}'
+            run_name = f'{name}_f{idx}'
             dataset_sub = train_sub_dl.dataset.dataset
             model = Transformer(config, dataset_sub, run_name).to(device)
-            train(model, train_sub_dl, val_sub_dl, device, str(idx))
+            train(model, train_sub_dl, val_sub_dl, device, f'_f{idx}')
         val_dataloader = None
         dataset = train_dataloader.dataset 
     else:
@@ -199,10 +200,6 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
         device (torch.device): torch.device object containing the GPU to train
                                on.
     '''
-    if fold != '':
-        model.config['wandb']['log_local'] = False
-        model.config['setup']['save_model'] = False
-
     scaler = torch.cuda.amp.GradScaler()
     config = model.config
 
@@ -216,28 +213,30 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
     optimizer = get_optimizer(model, config)
     scheduler = get_scheduler(optimizer, config)
 
-    # Init values to keep track of best val score
-    max_co_bps = float('-inf') # used to get the best.pt model
-    max_lt_co_bps = float('-inf') # used to get the best.pt model
+    # Init values to track val improvement
+    comp_met_val = metric_comparison(config)
     es_counter = 0
 
     # The progress bar shows how much time is remaining and current report
     progress_bar = print_run_get_prog_bar(config, model, wandb if (
         config['wandb']['log']) else None)
 
+    report = ['-', '-', '-', '-']
 
     # Each epoch is a single pass through the entire dataset.
     for epoch in range(config['train']['epochs']):
-        model.train() # sets the dropout to on
+        model.train() # turns on dropout
 
-        expand_prob = min( # probability to expand mask across multiple timesteps, increases starting at ramp_start epochs
-            (epoch - config['train']['ramp_start']) /
-            (config['train']['ramp_end'] - config['train']['ramp_start']),
-            1
-        
+        # Probability to expand mask across multiple timesteps, increases starting at ramp_start epochs
+        expand_prob = min(1,
+            (epoch - config['train']['ramp_start']) / (config['train']['ramp_end'] - config['train']['ramp_start'])
         )
+
+        # Create new results dict every epoch, either upload to wandb or write to csv
+        results_dict = {}
+
         # Each step is one batch
-        for step, (spikes, heldout_spikes) in enumerate(train_dataloader):
+        for spikes, heldout_spikes in train_dataloader:
 
             # preprocess_batch zero masks, randomizes, and sets the labels for masked and unmaksed
             masked_spikes, labels = model.preprocess_batch(
@@ -246,121 +245,114 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
                 heldout_spikes, # B, T, N
             )
 
-            # Dont need rates only loss
             with torch.cuda.amp.autocast():
                 loss, _ = model(masked_spikes, labels)
-                lt_loss = loss[:, -1, :].mean()
-                masked_loss = loss[labels != -100].mean()
 
-            if config['wandb']['log']:
-                wandb.log({
-                    f'train masked loss{fold}': masked_loss, 
-                    f'train lt loss{fold}': lt_loss, 
-                    't_epochs':epoch
-                })
+            nll = loss.mean()
+            lt_nll = loss[:, -1, :].mean()
+            msk_nll = loss[labels != -100].mean()
             
+            results_dict['epochs'] = epoch
+            results_dict['train nll'] = nll
+            results_dict['train lt_nll'] = lt_nll
+            results_dict['train msk_nll'] = msk_nll
+
             # Backprop loss
-            scaler.scale(
-                lt_loss if config['train']['lt_loss_only'] else masked_loss
-            ).backward()
+            scaler.scale(lt_nll if config['train']['lt_loss_only'] else msk_nll).backward()
 
-            nn.utils.clip_grad_norm_(
-                model.parameters(),
-                config['train']['max_grad_norm'])
+            # Clip gradient
+            nn.utils.clip_grad_norm_(model.parameters(), config['train']['max_grad_norm'])
 
+            # Optimizer step
             scaler.step(optimizer)
             scaler.update()
-
             optimizer.zero_grad(set_to_none=True)
 
         if scheduler != None:
             scheduler.step()
-            if config['wandb']['log']:
-                wandb.log({f'lr{fold}':scheduler.optimizer.param_groups[0]['lr'], 't_epochs':epoch})
+            results_dict['lr'] = scheduler.optimizer.param_groups[0]['lr']
 
         # Run on the validation set every 'val_interval' epochs
-        if (epoch % config['train']['val_interval'] == 0 and
-            val_dataloader != None
-        ):
+        if val_dataloader != None and epoch % config['train']['val_interval'] == 0:
             model.eval() # turns off dropout
 
-            all_loss, heldout_loss, heldin_loss = [], [], []
-            eval_rates, eval_hi_spikes, eval_ho_spikes = [], [], []
-            results_dict = {}
+            with torch.no_grad():
+                all_loss, heldout_loss, heldin_loss = [], [], []
+                all_rates, hi_spikes, ho_spikes = [], [], []
 
-            for step, (spikes, heldout_spikes) in enumerate(val_dataloader):
-                with torch.no_grad():
+                for spikes, heldout_spikes in val_dataloader:
                     labels = spikes.clone()
-                    labels = torch.cat([labels, heldout_spikes], -1)
-                    spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes, device=device)], -1)
+                    if config['train']['heldout']:
+                        labels = torch.cat([labels, heldout_spikes], -1)
+                        spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes, device=device)], -1)
 
                     loss, rates = model(spikes, labels)
 
                     all_loss.append(loss)
-                    heldin_loss.append(loss[:,:, :-heldout_spikes.size(-1)])
-                    heldout_loss.append(loss[:,:, -heldout_spikes.size(-1):])
+                    all_rates.append(rates)
 
-                    eval_rates.append(rates)
-                    eval_hi_spikes.append(spikes[:,:, :-heldout_spikes.size(-1)])
-                    eval_ho_spikes.append(heldout_spikes)
+                    if config['train']['heldout']:
+                        heldin_loss.append(loss[:,:, :-heldout_spikes.size(-1)])
+                        heldout_loss.append(loss[:,:, -heldout_spikes.size(-1):])
 
-            eval_hi_rates = torch.cat([i[:,:, :-heldout_spikes.size(-1)] for i in eval_rates], dim=0).exp().cpu().numpy()
-            eval_ho_rates = torch.cat([i[:,:, -heldout_spikes.size(-1):] for i in eval_rates], dim=0).exp().cpu().numpy()
-            
-            eval_hi_spikes = torch.cat(eval_hi_spikes, dim=0).cpu().numpy()
-            eval_ho_spikes = torch.cat(eval_ho_spikes, dim=0).cpu().numpy() 
+                        hi_spikes.append(spikes[:,:, :-heldout_spikes.size(-1)])
+                        ho_spikes.append(heldout_spikes)
 
-            all_masked_loss = torch.cat([i[labels != 100] for i in all_loss], dim=0).cpu().numpy()
-            heldin_masked_loss = torch.cat([i[labels[:,:, :-heldout_spikes.size(-1)] != 100] for i in heldin_loss], dim=0).cpu().numpy()
-            heldout_masked_loss = torch.cat([i[labels[:,:, -heldout_spikes.size(-1):] != 100] for i in heldout_loss], dim=0).cpu().numpy()
+                nll = torch.cat(all_loss, dim=0).cpu().numpy()
+                lt_nll = torch.cat([i[:, -1, :] for i in all_loss], dim=0).cpu().numpy()
+                msk_nll = torch.cat([i[labels != 100] for i in all_loss], dim=0).cpu().numpy()
 
-            all_lt_loss = torch.cat([i[:, -1, :] for i in all_loss], dim=0).cpu().numpy()
-            heldin_lt_loss = torch.cat([i[:, -1, :] for i in heldin_loss], dim=0).cpu().numpy()
-            heldout_lt_loss = torch.cat([i[:, -1, :] for i in heldout_loss], dim=0).cpu().numpy()
+                if config['train']['heldout']:
+                    hi_rates = torch.cat([i[:,:, :-heldout_spikes.size(-1)] for i in all_rates], dim=0).exp()
+                    ho_rates = torch.cat([i[:,:, -heldout_spikes.size(-1):] for i in all_rates], dim=0).exp()
+                    # hi_rates = torch.cat([i[:,:, :-heldout_spikes.size(-1)] for i in all_rates], dim=0).exp().cpu().numpy()
+                    # ho_rates = torch.cat([i[:,:, -heldout_spikes.size(-1):] for i in all_rates], dim=0).exp().cpu().numpy()
+                    hi_spikes = torch.cat(hi_spikes, dim=0)
+                    ho_spikes = torch.cat(ho_spikes, dim=0)
+                    # hi_spikes = torch.cat(hi_spikes, dim=0).cpu().numpy()
+                    # ho_spikes = torch.cat(ho_spikes, dim=0).cpu().numpy() 
 
-            hi_co_bps = float(bits_per_spike(eval_hi_rates, eval_hi_spikes))
-            ho_co_bps = float(bits_per_spike(eval_ho_rates, eval_ho_spikes))
-            
-            hi_lt_co_bps = float(bits_per_spike(np.expand_dims(eval_hi_rates[:, -1, :], axis=-2), np.expand_dims(eval_hi_spikes[:, -1, :], axis=-2)))
-            ho_lt_co_bps = float(bits_per_spike(np.expand_dims(eval_ho_rates[:, -1, :], axis=-2), np.expand_dims(eval_ho_spikes[:, -1, :], axis=-2)))
-            
-            # Save current model if it scores higher than the max_co_bps and is past the save_min_bps
-            if ho_lt_co_bps > max_lt_co_bps:
-                max_lt_co_bps = ho_lt_co_bps
-                es_counter = 0
-                if config['setup']['save_model'] and ho_lt_co_bps > config['setup']['save_min_bps']:
-                    torch.save(model, save_path+'best_lt_co_bps.pt')
+                    hi_lt_nll = torch.cat([i[:, -1, :] for i in heldin_loss], dim=0).cpu().numpy()
+                    ho_lt_nll = torch.cat([i[:, -1, :] for i in heldout_loss], dim=0).cpu().numpy()
+                    hi_msk_nll = torch.cat([i[labels[:,:, :-heldout_spikes.size(-1)] != 100] for i in heldin_loss], dim=0).cpu().numpy()
+                    ho_msk_nll = torch.cat([i[labels[:,:, -heldout_spikes.size(-1):] != 100] for i in heldout_loss], dim=0).cpu().numpy()
 
-            else: es_counter += 1
+                    hi_co_bps = float(bits_per_spike(hi_rates, hi_spikes))
+                    ho_co_bps = float(bits_per_spike(ho_rates, ho_spikes))
+                    hi_lt_co_bps = float(bits_per_spike(torch.unsqueeze(hi_rates[:, -1, :], dim=-2), torch.unsqueeze(hi_spikes[:, -1, :], dim=-2)))
+                    ho_lt_co_bps = float(bits_per_spike(torch.unsqueeze(ho_rates[:, -1, :], dim=-2), torch.unsqueeze(ho_spikes[:, -1, :], dim=-2)))
+                
+                    results_dict['val hi_lt_nll'] = np.mean(hi_lt_nll)
+                    results_dict['val ho_lt_nll'] = np.mean(ho_lt_nll)
+                    results_dict['val hi_msk_nll'] = np.mean(hi_msk_nll)
+                    results_dict['val ho_msk_nll'] = np.mean(ho_msk_nll)
+                    results_dict['val hi_co_bps'] = hi_co_bps
+                    results_dict['val ho_co_bps'] = ho_co_bps
+                    results_dict['val hi_lt_co_bps'] = hi_lt_co_bps
+                    results_dict['val ho_lt_co_bps'] = ho_lt_co_bps
 
-            results_dict = {
-                'epoch': epoch,
-                'all_masked_loss': np.mean(all_masked_loss),
-                'heldin_masked_loss': np.mean(heldin_masked_loss),
-                'heldout_masked_loss': np.mean(heldout_masked_loss),
-                'all_lt_loss': np.mean(all_lt_loss),
-                'heldin_lt_loss': np.mean(heldin_lt_loss),
-                'heldout_lt_loss': np.mean(heldout_lt_loss),
-                'hi_co_bps': hi_co_bps,
-                'ho_co_bps': ho_co_bps,
-                'hi_lt_co_bps': hi_lt_co_bps,
-                'ho_lt_co_bps': ho_lt_co_bps
-            }
+                results_dict['val nll'] = np.mean(nll)
+                results_dict['val lt_nll'] = np.mean(lt_nll)
+                results_dict['val msk_nll'] = np.mean(msk_nll)
+                
+                improved, ovrw_val, comp_metric = metric_comparison(config, comp_met_val, results_dict)
+                if improved:
+                    comp_met_val = ovrw_val
+                    es_counter = 0
+                    if config['setup']['save_model']:
+                        torch.save(model, save_path + f'best_{comp_metric}.pt')
+                else: es_counter += 1
 
-            # Update the report above the progress bar and upload to wandb
-            upload_print_results(config, results_dict, progress_bar, save_path, fold)
+        # Update the report above the progress bar and upload to wandb
+        upload_print_results(config, report, results_dict, progress_bar, save_path, fold)
 
-            # If co-bps is lower than the es_min_bps, then stop the training
-            if (es_counter >=  config['train']['es_patience'] or (
-                config['train']['early_stopping'] and
-                epoch > config['train']['epochs'] * config['train']['es_chk_pnt'] and
-                ho_lt_co_bps < config['train']['es_min_bps']
-            )):
-                for i in range(3):
-                    progress_bar.display(' '*progress_bar.ncols, pos=0) # flush the screen
-                progress_bar.close()
-                print('\n\n! Early Stopping !\n')
-                break
+        # Early Stopping
+        if es_counter >= config['train']['es_patience'] and config['train']['early_stopping']:
+            for i in range(3):
+                progress_bar.display(' '*progress_bar.ncols, pos=0) # flush the screen
+            progress_bar.close()
+            print('\n\n! Early Stopping !\n')
+            break
 
         progress_bar.update(1)
     progress_bar.display('', pos=2)
@@ -370,7 +362,7 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
     # Save the last.pt model
     if config['setup']['save_model']:
         torch.save(model, save_path+'last.pt')
-        print('Saved best.pt & last.pt to: '+save_path)
+        print('Saved best & last checkpoints to: '+save_path)
 
 
 if __name__ == "__main__":
