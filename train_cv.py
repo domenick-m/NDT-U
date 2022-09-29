@@ -32,6 +32,7 @@ from utils import (get_config,
                    set_device,
                    get_wandb_config,
                    get_optimizer,
+                   add_tmux_agents,
                    get_scheduler,
                    get_wandb_dir,
                    set_sweep_config,
@@ -70,38 +71,28 @@ def main():
     model_name = arg_dict['--name'] # if no name arg was passed then this is None
 
     # Set GPU used by cuda:0 from config.setup.gpu_idx
-    set_device(config)
+    set_device(config, arg_dict)
     device = torch.device('cuda:0')
 
     os.environ['WANDB_SILENT'] = 'true' if config['wandb']['silent'] else 'false' # dont print wandb logs
 
     # Add an agent to a wandb sweep
-    if '--tadd' in arg_dict:
-        # Add agents to all specified under agent_gpus
-        # If -1 then add to all gpus except sweep gpu, most used?
+    if '--add' in arg_dict:
         add_sweep_agent(config)
-        exit()
-    elif '--add' in arg_dict:
-        add_sweep_agent(config)
-        exit()
+    elif '--tadd' in arg_dict:
+        add_tmux_agents(config)
 
-    # Run a wandb sweep
-    if '--tsweep' in arg_dict:
-        # Start a sweep then make tmux and add all agents
-        # sweep_id = set_sweep_config(config, arg_dict)
-        # The agent function below starts running the run_sweep unitl killed
-        start_tmux_sweep(config['setup']['ag_gpus'])
-        # Remove wandb sweep folder when completed
-        # shutil.rmtree(glob('./wandb/*'+sweep_id+'/')[0])
-
+    # Start a wandb sweep
     elif config['train']['sweep_enabled'] or '--sweep' in arg_dict:
         sweep_id = set_sweep_config(config, arg_dict)
-        # The agent function below starts running the run_sweep unitl killed
         add_sweep_agent(config, sweep_id)
         # Remove wandb sweep folder when completed
         shutil.rmtree(glob('./wandb/*'+sweep_id+'/')[0])
+    elif '--tsweep' in arg_dict:
+        # Start tmux session then start sweep and add agents
+        start_tmux_sweep(config['setup']['ag_gpus'])
 
-    # Run single train
+    # Run training
     else:
         run_training(config, device, model_name)
 
@@ -183,9 +174,15 @@ def add_sweep_agent(config, id=None):
                 chosen_index = input('\nPlease enter a number between 1 and '+str(len(id_list))+': ')
             id = id_list[int(chosen_index)-1]
         else:
-            id = file_list[0].split('/')[-1].split('-')[-1]
+            try: id = file_list[0].split('/')[-1].split('-')[-1]
+            except: 
+                print('No sweeps are currently running.')
+                exit()
 
     print('Adding agent to sweep with ID:', id+'\n')
+    my_env = os.environ.copy()
+    if config['setup']['gpu'] != -1:
+        my_env["CUDA_VISIBLE_DEVICES"] = str(config['setup']['gpu'])
 
     call = [
         "wandb", "agent", 
@@ -197,11 +194,12 @@ def add_sweep_agent(config, id=None):
         call.insert(2, '--count')
         call.insert(3, f'{config["train"]["sweep_epochs"]}')
 
-    with subprocess.Popen(call) as p:
+    with subprocess.Popen(call, env=my_env) as p:
         try: return p.wait()
         except:  
             p.send_signal(signal.SIGINT)
             p.wait()
+    exit()
 
 
 def train(model, train_dataloader, val_dataloader, device, fold=''):

@@ -108,7 +108,7 @@ config.wandb.entity = 'emory-bg2' # The wandb project the run should be stored i
 config.wandb.project = 'batch_size_test' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 config.wandb.log_local = True # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt'
-config.wandb.silent = False # ['true', 'false'] If 'true' wandb does not print anything
+config.wandb.silent = True # ['true', 'false'] If 'true' wandb does not print anything
 '''
                     ►──────────── WANDB.SWEEP ────────────◄
 '''

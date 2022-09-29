@@ -44,46 +44,69 @@ import time
 
 def start_tmux_sweep(ag_gpus):
     if subprocess.getoutput('tmux has-session -t ndt_sweep'):
-        # subprocess.call("tmux new-session -d -s ndt_sweep -x- -y-", shell=True)
-        n_gpus = int(subprocess.getoutput('nvidia-smi --list-gpus | wc -l')) - 1
-
         server = libtmux.Server()
         session = server.new_session(session_name="ndt_sweep", kill_session=True, attach=False)
         window = session.attached_window
-        panes = [window.attached_pane]
-        for i in range(n_gpus):
-            panes.append(window.split_window(vertical=True))
+
+        n_gpus = int(subprocess.getoutput('nvidia-smi --list-gpus | wc -l'))
+        pane = window.attached_pane
+        pane.send_keys('ndt;c')
+        panes = [pane]
+        for i in range(n_gpus - 1):
+            pane = window.split_window(vertical=True)
+            pane.send_keys('ndt;c')
+            panes.append(pane)
         window.select_layout('even-vertical')
 
-        if ag_gpus == -1:
-            for idx, pane in enumerate(panes):
+        if ag_gpus == []:
+            panes[0].send_keys(f'./train_cv.py --sweep -y --gpu -1')
+        else:
+            if ag_gpus == [-1]:
+                ag_gpus = [i for i in range(n_gpus)]
+
+            for idx, gpu in enumerate(ag_gpus):
                 if idx == 0: 
-                    pane.send_keys(f'ndt; ./train_cv.py --sweep -y --gpu {idx}')
+                    panes[idx].send_keys(f'./train_cv.py --sweep -y --gpu {gpu}')
                     time.sleep(1)
-                else: pane.send_keys(f'ndt; ./train_cv.py --add --gpu {idx}')
+                else: panes[idx].send_keys(f'./train_cv.py --add --gpu {gpu}')
         server.attach_session(target_session="ndt_sweep")
     else:
         print("Session exists! \nCall ./train.py --kill to end it.")
-        exit()
-    # if ag_gpus == -1:
-    #     # Add agents to all
+    exit()
 
-    #     test = '''tmux has-session -t $session 2>/dev/null
-        
-    #     if [ $? != 0 ]; then
-    #     # tmux new-session -d -s $session -x- -y-
-    #     n_gpus="$(($(nvidia-smi --list-gpus | wc -l) - 1))"
-    #     for i in $( seq 0 $n_gpus )
-    #     do
-    #         if [ $i == 0 ]; then
-    #         echo "Start sweep"
-    #         else
-    #         echo "Add agent"
-    #         fi
-    #     done'''
+def add_tmux_agents(ag_gpus):
+    server = libtmux.Server()
+    session = server.find_where({"session_name": "ndt_sweep"})
+    print(session)
+    # if not subprocess.getoutput('tmux has-session -t ndt_sweep'):
+    #     server = libtmux.Server()
+    #     session = server.new_session(session_name="ndt_sweep", kill_session=True, attach=False)
+    #     window = session.attached_window
+
+    #     n_gpus = int(subprocess.getoutput('nvidia-smi --list-gpus | wc -l'))
+
+    #     panes = [window.attached_pane]
+    #     for i in range(n_gpus - 1):
+    #         panes.append(window.split_window(vertical=True))
+    #     window.select_layout('even-vertical')
+
+    #     if ag_gpus == []:
+    #         panes[0].send_keys(f'ndt; ./train_cv.py --sweep -y --gpu -1')
+    #     else:
+    #         if ag_gpus == [-1]:
+    #             ag_gpus = [i for i in range(n_gpus)]
+
+    #         for idx, gpu in enumerate(ag_gpus):
+    #             if idx == 0: 
+    #                 panes[idx].send_keys(f'ndt; ./train_cv.py --sweep -y --gpu {gpu}')
+    #                 time.sleep(1)
+    #             else: panes[idx].send_keys(f'ndt; ./train_cv.py --add --gpu {gpu}')
+    #     server.attach_session(target_session="ndt_sweep")
     # else:
-    #     # Add agents to the gpus in ag_gpus
-    #     pass
+    #     print("No tmux sessions availiable!")
+    #     exit()
+    exit()
+
 
 def bits_per_spike(rates, spikes):
     nll_model = nn.functional.poisson_nll_loss(rates, spikes, log_input=False, full=True, reduction='sum')
@@ -238,15 +261,18 @@ def get_config_types():
         type_dict[key] = type(value)
     return type_dict
 
-def set_device(config):
+def set_device(config, arg_dict):
     ''' Sets torch device according to config.setup.gpu_idx, -1 will auto-select
     the GPU with the least memory usage.
 
     Args:
         config (dict): A config object.
-    '''
-    if 'CUDA_VISIBLE_DEVICES' not in os.environ:
-        device = None
+    '''    
+    if 'gpu' in arg_dict:
+        device = arg_dict['gpu'] # CLI defined GPU index
+    elif 'CUDA_VISIBLE_DEVICES' in os.environ:
+        return
+    else:
         # If gpu_idx = -1 then auto-select the least used GPU
         if config['setup']['gpu'] == -1:
             smi_output = subprocess.check_output('nvidia-smi -q -d Memory | grep -A4 GPU', shell=True)
@@ -255,7 +281,8 @@ def set_device(config):
             gpu_list = [int(x.split(':')[1].replace('MiB', '').strip()) for x in gpu_list] # list of memory usage in MB
             device = str(min(range(len(gpu_list)), key=lambda x: gpu_list[x])) # get argmin
         else: device = str(config['setup']['gpu']) # user defined GPU index
-        # Using env vars allows cuda:0 to be used regardless of GPU
+    # Using env vars allows cuda:0 to be used regardless of GPU
+    if not '--tsweep' in arg_dict:
         os.environ['CUDA_VISIBLE_DEVICES'] = device
     
 def set_seeds(config):
@@ -295,7 +322,8 @@ def set_sweep_config(config, arg_dict):
     if empty:
         print("Cannot start a sweep, please add values under 'config.wandb.sweep'.")
         exit()
-    command = ['${env}', 'python3', '${program}', '-y', '${args}']
+
+    command = ['${env}', 'python3', '${program}', '-y']
     sweep_config = {
         'name' : config['wandb']['sweep_name'],
         'project' : config['wandb']['project'],
@@ -420,7 +448,6 @@ def wandb_cleanup():
                     run.summary[f"{metric}_min_std"] = np.std(tmp_list)
 
         run.summary.update()
-
     # if wandb.run != None:
     #     run_id = wandb.run.id
     #     # wandb.finish()
@@ -643,7 +670,7 @@ def parse_args(args):
             print(' --{CFG KEY} value  can change any setting in the config to the supplied value')
             print('\nexample:\n train.py -y --dataset area2_bump')
             exit()
-        elif arg in ['-y', '--add', '--tadd' '--kill', '--sweep', '--tsweep', '--default']:
+        elif arg in ['-y', '--add', '--tadd', '--kill', '--sweep', '--tsweep', '--default']:
             arg_dict[arg] = True
         elif arg == '--name':
             if args[index+1][:2] != '--':
@@ -668,8 +695,7 @@ def parse_args(args):
                 if type_dict[param] == bool:
                     arg_dict[arg] = type_dict[param](strtobool(args[index+1]))
                 elif type_dict[param] == list:
-                    arg_dict[arg] = args[index+1].strip('][').split(',')
-
+                    arg_dict[arg] = [int(i) for i in args[index+1].strip('][').split(',')]
                 else: arg_dict[arg] = type_dict[param](args[index+1])
             except:
                 print('\n! Argument Type Error. !')
