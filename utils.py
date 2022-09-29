@@ -38,10 +38,57 @@ from def_config import config
    ║                              CONFIG UTILS                              ║
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
+
+import libtmux
+import time
+
+def start_tmux_sweep(ag_gpus):
+    if subprocess.getoutput('tmux has-session -t ndt_sweep'):
+        # subprocess.call("tmux new-session -d -s ndt_sweep -x- -y-", shell=True)
+        n_gpus = int(subprocess.getoutput('nvidia-smi --list-gpus | wc -l')) - 1
+
+        server = libtmux.Server()
+        session = server.new_session(session_name="ndt_sweep", kill_session=True, attach=False)
+        window = session.attached_window
+        panes = [window.attached_pane]
+        for i in range(n_gpus):
+            panes.append(window.split_window(vertical=True))
+        window.select_layout('even-vertical')
+
+        if ag_gpus == -1:
+            for idx, pane in enumerate(panes):
+                if idx == 0: 
+                    pane.send_keys(f'ndt; ./train_cv.py --sweep -y --gpu {idx}')
+                    time.sleep(1)
+                else: pane.send_keys(f'ndt; ./train_cv.py --add --gpu {idx}')
+        server.attach_session(target_session="ndt_sweep")
+    else:
+        print("Session exists! \nCall ./train.py --kill to end it.")
+        exit()
+    # if ag_gpus == -1:
+    #     # Add agents to all
+
+    #     test = '''tmux has-session -t $session 2>/dev/null
+        
+    #     if [ $? != 0 ]; then
+    #     # tmux new-session -d -s $session -x- -y-
+    #     n_gpus="$(($(nvidia-smi --list-gpus | wc -l) - 1))"
+    #     for i in $( seq 0 $n_gpus )
+    #     do
+    #         if [ $i == 0 ]; then
+    #         echo "Start sweep"
+    #         else
+    #         echo "Add agent"
+    #         fi
+    #     done'''
+    # else:
+    #     # Add agents to the gpus in ag_gpus
+    #     pass
+
 def bits_per_spike(rates, spikes):
     nll_model = nn.functional.poisson_nll_loss(rates, spikes, log_input=False, full=True, reduction='sum')
-    nll_null = nn.functional.poisson_nll_loss(torch.mean(spikes, dim=(0,1), keepdim=True).tile((spikes.shape[0], spikes.shape[1], 1)), spikes, log_input=False, full=True, reduction='sum')
-    return (nll_null - nll_model) / spikes.sum() / 0.6931471805599453
+    nll_null = nn.functional.poisson_nll_loss(torch.nanmean(spikes, dim=(0,1), keepdim=True).tile((spikes.shape[0], spikes.shape[1], 1)), spikes, log_input=False, full=True, reduction='sum')
+    return float((nll_null - nll_model) / spikes.nansum() / 0.6931471805599453)
 
 def metric_comparison(config, comp_met_val=None, results_dict=None):
     comp_metric = config['setup']['comp_metric']
@@ -198,17 +245,18 @@ def set_device(config):
     Args:
         config (dict): A config object.
     '''
-    device = None
-    # If gpu_idx = -1 then auto-select the least used GPU
-    if config['setup']['gpu_idx'] == -1:
-        smi_output = subprocess.check_output('nvidia-smi -q -d Memory | grep -A4 GPU', shell=True)
-        gpu_list = smi_output.decode('utf-8').split('\n')
-        gpu_list = list(filter(lambda x: 'Used' in x, gpu_list))
-        gpu_list = [int(x.split(':')[1].replace('MiB', '').strip()) for x in gpu_list] # list of memory usage in MB
-        device = str(min(range(len(gpu_list)), key=lambda x: gpu_list[x])) # get argmin
-    else: device = str(config['setup']['gpu_idx']) # user defined GPU index
-    # Using env vars allows cuda:0 to be used regardless of GPU
-    os.environ['CUDA_VISIBLE_DEVICES'] = device
+    if 'CUDA_VISIBLE_DEVICES' not in os.environ:
+        device = None
+        # If gpu_idx = -1 then auto-select the least used GPU
+        if config['setup']['gpu'] == -1:
+            smi_output = subprocess.check_output('nvidia-smi -q -d Memory | grep -A4 GPU', shell=True)
+            gpu_list = smi_output.decode('utf-8').split('\n')
+            gpu_list = list(filter(lambda x: 'Used' in x, gpu_list))
+            gpu_list = [int(x.split(':')[1].replace('MiB', '').strip()) for x in gpu_list] # list of memory usage in MB
+            device = str(min(range(len(gpu_list)), key=lambda x: gpu_list[x])) # get argmin
+        else: device = str(config['setup']['gpu']) # user defined GPU index
+        # Using env vars allows cuda:0 to be used regardless of GPU
+        os.environ['CUDA_VISIBLE_DEVICES'] = device
     
 def set_seeds(config):
     ''' Sets seeds.
@@ -305,9 +353,79 @@ def wandb_cleanup():
     '''
     if wandb.run != None:
         run_id = wandb.run.id
-        # wandb.finish()
-        dir_q = get_wandb_dir()
-        wandb_dir = dir_q if dir_q != None else '.'
+        wandb.finish()
+        api = wandb.Api()
+        run = api.run(f"{config['wandb']['entity']}/{config['wandb']['project']}/{run_id}")
+
+        max_metrics = [
+            'val ho_lt_co_bps', 
+            'val ho_co_bps', 
+            'val hi_lt_co_bps', 
+            'val hi_co_bps'
+        ]
+        min_metrics = [
+            'train nll', 
+            'train lt_nll', 
+            'val nll', 
+            'val lt_nll'
+        ]
+        avg_metrics = [
+            'val ho_lt_co_bps', 
+            'val ho_co_bps', 
+            'val hi_lt_co_bps', 
+            'val hi_co_bps',
+            'val nll', 
+            'val lt_nll'
+        ]
+
+        for metric in max_metrics:
+            if metric in run.summary.keys():
+                run.summary[f"{metric}_max"] = np.max(run.history()[metric])
+            if config['train']['val_type'] == 'cross_val':
+                for i in range(config['train']['n_folds']):
+                    if f'{metric}_f{i}' in run.summary.keys():
+                        run.summary[f"{metric}_max_f{i}"] = np.max(run.history()[f"{metric}_f{i}"])
+
+        for metric in min_metrics:
+            if metric in run.summary.keys():
+                run.summary[f"{metric}_min"] = np.min(run.history()[metric])
+            if config['train']['val_type'] == 'cross_val':
+                for i in range(config['train']['n_folds']):
+                    if f'{metric}_f{i}' in run.summary.keys():
+                        run.summary[f"{metric}_min_f{i}"] = np.min(run.history()[f"{metric}_f{i}"])
+        
+        # run.summary.update()
+
+        if config['train']['val_type'] == 'cross_val':
+            for metric in avg_metrics:
+                tmp_list = []
+                for i in range(config['train']['n_folds']):
+                    if f'{metric}_f{i}' in run.summary.keys():
+                        tmp_list.append(run.summary[f'{metric}_f{i}'])
+                run.summary[f"{metric}_avg"] = np.mean(tmp_list)
+                run.summary[f"{metric}_std"] = np.std(tmp_list)
+                if metric in max_metrics:
+                    tmp_list = []
+                    for i in range(config['train']['n_folds']):
+                        if f'{metric}_max_f{i}' in run.summary.keys():
+                            tmp_list.append(run.summary[f'{metric}_max_f{i}'])
+                    run.summary[f"{metric}_max_avg"] = np.mean(tmp_list)
+                    run.summary[f"{metric}_max_std"] = np.std(tmp_list)
+                if metric in min_metrics:
+                    tmp_list = []
+                    for i in range(config['train']['n_folds']):
+                        if f'{metric}_min_f{i}' in run.summary.keys():
+                            tmp_list.append(run.summary[f'{metric}_min_f{i}'])
+                    run.summary[f"{metric}_min_avg"] = np.mean(tmp_list)
+                    run.summary[f"{metric}_min_std"] = np.std(tmp_list)
+
+        run.summary.update()
+
+    # if wandb.run != None:
+    #     run_id = wandb.run.id
+    #     # wandb.finish()
+    #     dir_q = get_wandb_dir()
+    #     wandb_dir = dir_q if dir_q != None else '.'
         # shutil.rmtree(glob(wandb_dir+'/wandb/*'+run_id+'/')[0])
 
 def get_wandb_dir():
@@ -508,13 +626,24 @@ def parse_args(args):
             print(' -y                 skip the confirmation dialog')
             print(' --add              adds an agent to an already existing sweep')
             print(' --kill             kills all tmux runs')
+
+
             print(' --sweep            starts a sweep, identical to --sweep_enabled True')
+
+            print(' --tsweep           starts a sweep, opens a tmux session and opens agents on all GPUs specified under agent_gpus. \
+                Having an empty list would result in a tmux session being created with the same unmber of windows \
+                as gpus on the host but only running one agent on the gpu specified by gpu_idx.')
+            print(' --tadd             adds an agent to the sweep on all gpus specified by agent_gpus, assumes \
+                tmux and sweep have been created')
+
+
+
             print(' --default          only the default_config should be used (no dataset_configs)')
             print(' --name name        assigns given name to the run, used in wandb and when saving')
             print(' --{CFG KEY} value  can change any setting in the config to the supplied value')
             print('\nexample:\n train.py -y --dataset area2_bump')
             exit()
-        elif arg in ['-y', '--add', '--kill', '--sweep', '--default']:
+        elif arg in ['-y', '--add', '--tadd' '--kill', '--sweep', '--tsweep', '--default']:
             arg_dict[arg] = True
         elif arg == '--name':
             if args[index+1][:2] != '--':
@@ -536,9 +665,12 @@ def parse_args(args):
                 print('\n! Argument Missing Value. !\n  '+arg+' is missing a value.\n  '+'‾'*len(arg))
                 exit()
             try:
-                arg_dict[arg] = type_dict[param](strtobool(args[index+1])) if (
-                    type_dict[param] == bool
-                ) else type_dict[param](args[index+1])
+                if type_dict[param] == bool:
+                    arg_dict[arg] = type_dict[param](strtobool(args[index+1]))
+                elif type_dict[param] == list:
+                    arg_dict[arg] = args[index+1].strip('][').split(',')
+
+                else: arg_dict[arg] = type_dict[param](args[index+1])
             except:
                 print('\n! Argument Type Error. !')
                 print('  '+arg+' '+args[index+1]+' ← needs to be type: '+str(type_dict[param]))
@@ -588,11 +720,11 @@ def upload_print_results(config, report, result_dict, progress_bar, save_path, f
         progress_bar (tqdm): Progress bar.
         save_path (str): Where to save locally.
     '''
-    for idx, met in enumerate(["val lt_nll", "val msk_nll", "val ho_co_bps", "val ho_lt_co_bps"]):
+    for idx, met in enumerate(["val lt_nll", "val nll", "val ho_co_bps", "val ho_lt_co_bps"]):
         if met in result_dict:
             report[idx] = f'{result_dict[met]:.3f}'
 
-    report_str = '[Epoch: {}] [lt nll: {}] [msk nll: {}] [co-bps: {}] [lt co-bps: {}]'.format(
+    report_str = '[Epoch: {}] [lt nll: {}] [nll: {}] [co-bps: {}] [lt co-bps: {}]'.format(
         result_dict['epochs'], report[0], report[1], report[2], report[3]
     )
         
@@ -640,8 +772,8 @@ def print_train_configs(config, args):
         setup_box[0], setup_box[1], setup_box[2],
         format_config('dataset', config.setup.dataset),
         format_config('seed', config.setup.seed),
-        format_config('gpu_idx', config.setup.gpu_idx),
-        format_config('agent_gpus', config.setup.agent_gpus),
+        format_config('gpu', config.setup.gpu),
+        format_config('ag_gpus', config.setup.ag_gpus),
         format_config('log_eps', config.setup.log_eps),
         format_config('save_model', config.setup.save_model),
         '', wandb_box[0], wandb_box[1], wandb_box[2],

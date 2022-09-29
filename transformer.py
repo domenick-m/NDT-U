@@ -225,6 +225,7 @@ class Transformer(Module):
         self.encoder = Encoder(config, self.n_neurons, encoder_layer, self.seq_len)
         self.decoder = nn.Linear(self.n_neurons, self.n_neurons)
 
+        self.zeros = None
         self.attn_mask = None
         self.loss_prob_mask = None
         self.zero_prob_mask = None
@@ -352,9 +353,11 @@ class Transformer(Module):
         random_spikes = torch.randint(batch.max().long(), labels.shape, dtype=torch.long, device=batch.device)
         batch[indices_randomized] = random_spikes.float()[indices_randomized]
 
-        # Add fake heldout and forward
+        # Add 0 masked heldout if needed
         if config['train']['heldout']:
-            batch = torch.cat([batch, torch.zeros_like(heldout_spikes)], -1)
+            if self.zeros is None or self.zeros != heldout_spikes.size():
+                self.zeros = torch.zeros_like(heldout_spikes)
+            batch = torch.cat([batch, self.zeros], -1)
             labels = torch.cat([labels, heldout_spikes], -1)
 
         return batch, labels

@@ -2,7 +2,7 @@
 # Author: Domenick Mifsud
 #───────#
 from test_eval import test_eval
-
+from timeit import default_timer as timer
 import os
 # import gc
 import sys
@@ -37,6 +37,7 @@ from utils import (get_config,
                    set_sweep_config,
                    setup_runs_folder,
                    print_train_configs,
+                   start_tmux_sweep,
                    upload_print_results,
                    print_run_get_prog_bar,
                    wandb_cleanup)
@@ -75,12 +76,25 @@ def main():
     os.environ['WANDB_SILENT'] = 'true' if config['wandb']['silent'] else 'false' # dont print wandb logs
 
     # Add an agent to a wandb sweep
-    if '--add' in arg_dict:
+    if '--tadd' in arg_dict:
+        # Add agents to all specified under agent_gpus
+        # If -1 then add to all gpus except sweep gpu, most used?
+        add_sweep_agent(config)
+        exit()
+    elif '--add' in arg_dict:
         add_sweep_agent(config)
         exit()
 
     # Run a wandb sweep
-    if config['train']['sweep_enabled'] or '--sweep' in arg_dict:
+    if '--tsweep' in arg_dict:
+        # Start a sweep then make tmux and add all agents
+        # sweep_id = set_sweep_config(config, arg_dict)
+        # The agent function below starts running the run_sweep unitl killed
+        start_tmux_sweep(config['setup']['ag_gpus'])
+        # Remove wandb sweep folder when completed
+        # shutil.rmtree(glob('./wandb/*'+sweep_id+'/')[0])
+
+    elif config['train']['sweep_enabled'] or '--sweep' in arg_dict:
         sweep_id = set_sweep_config(config, arg_dict)
         # The agent function below starts running the run_sweep unitl killed
         add_sweep_agent(config, sweep_id)
@@ -103,11 +117,6 @@ def run_training(config, device, name):
     '''
     set_seeds(config)
     cross_val_enabled = (config['train']['val_type'] == 'cross_val')
-    
-    train_dataloader, val_dataloader = get_dataloaders(
-        config, 
-        'cross_val' if cross_val_enabled else 'train_val'
-    )
 
     if config['wandb']['log']:
         wandb.init(
@@ -125,6 +134,11 @@ def run_training(config, device, name):
 
     name = get_run_name(config, name)
 
+    train_dataloader, val_dataloader = get_dataloaders(
+        config, 
+        'cross_val' if cross_val_enabled else 'train_val'
+    )
+
     if cross_val_enabled:
         for idx, train_sub_dl, val_sub_dl in val_dataloader:
             run_name = f'{name}_f{idx}'
@@ -138,7 +152,7 @@ def run_training(config, device, name):
 
     model = Transformer(config, dataset, name).to(device)
     train(model, train_dataloader, val_dataloader, device)
-    test_eval(config, model)
+    # test_eval(config, model)
 
     wandb_cleanup()
     torch.cuda.empty_cache()
@@ -248,14 +262,16 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
             with torch.cuda.amp.autocast():
                 loss, _ = model(masked_spikes, labels)
 
-            nll = loss.mean()
             lt_nll = loss[:, -1, :].mean()
             msk_nll = loss[labels != -100].mean()
             
             results_dict['epochs'] = epoch
-            results_dict['train nll'] = nll
+            results_dict['train nll'] = loss.mean()
             results_dict['train lt_nll'] = lt_nll
             results_dict['train msk_nll'] = msk_nll
+
+            if config['wandb']['log'] and epoch % config['train']['val_interval'] != 0: 
+                wandb.log({k+fold if k != 'epochs' else 'epochs': v for k, v in results_dict.items()})
 
             # Backprop loss
             scaler.scale(lt_nll if config['train']['lt_loss_only'] else msk_nll).backward()
@@ -277,65 +293,46 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
             model.eval() # turns off dropout
 
             with torch.no_grad():
-                all_loss, heldout_loss, heldin_loss = [], [], []
-                all_rates, hi_spikes, ho_spikes = [], [], []
+                spikes, ho_spikes = val_dataloader 
+                labels = spikes.clone()
+                hi_spikes = spikes.clone()
+                
+                if config['train']['heldout']:
+                    labels = torch.cat([labels, ho_spikes], -1)
+                    spikes = torch.cat([spikes, torch.zeros_like(ho_spikes, device=device)], -1)
 
-                for spikes, heldout_spikes in val_dataloader:
-                    labels = spikes.clone()
-                    if config['train']['heldout']:
-                        labels = torch.cat([labels, heldout_spikes], -1)
-                        spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes, device=device)], -1)
-
+                with torch.cuda.amp.autocast():
                     loss, rates = model(spikes, labels)
 
-                    all_loss.append(loss)
-                    all_rates.append(rates)
-
-                    if config['train']['heldout']:
-                        heldin_loss.append(loss[:,:, :-heldout_spikes.size(-1)])
-                        heldout_loss.append(loss[:,:, -heldout_spikes.size(-1):])
-
-                        hi_spikes.append(spikes[:,:, :-heldout_spikes.size(-1)])
-                        ho_spikes.append(heldout_spikes)
-
-                nll = torch.cat(all_loss, dim=0).cpu().numpy()
-                lt_nll = torch.cat([i[:, -1, :] for i in all_loss], dim=0).cpu().numpy()
-                msk_nll = torch.cat([i[labels != 100] for i in all_loss], dim=0).cpu().numpy()
-
                 if config['train']['heldout']:
-                    hi_rates = torch.cat([i[:,:, :-heldout_spikes.size(-1)] for i in all_rates], dim=0).exp()
-                    ho_rates = torch.cat([i[:,:, -heldout_spikes.size(-1):] for i in all_rates], dim=0).exp()
-                    # hi_rates = torch.cat([i[:,:, :-heldout_spikes.size(-1)] for i in all_rates], dim=0).exp().cpu().numpy()
-                    # ho_rates = torch.cat([i[:,:, -heldout_spikes.size(-1):] for i in all_rates], dim=0).exp().cpu().numpy()
-                    hi_spikes = torch.cat(hi_spikes, dim=0)
-                    ho_spikes = torch.cat(ho_spikes, dim=0)
-                    # hi_spikes = torch.cat(hi_spikes, dim=0).cpu().numpy()
-                    # ho_spikes = torch.cat(ho_spikes, dim=0).cpu().numpy() 
+                    n_heldout = ho_spikes.shape[-1]
 
-                    hi_lt_nll = torch.cat([i[:, -1, :] for i in heldin_loss], dim=0).cpu().numpy()
-                    ho_lt_nll = torch.cat([i[:, -1, :] for i in heldout_loss], dim=0).cpu().numpy()
-                    hi_msk_nll = torch.cat([i[labels[:,:, :-heldout_spikes.size(-1)] != 100] for i in heldin_loss], dim=0).cpu().numpy()
-                    ho_msk_nll = torch.cat([i[labels[:,:, -heldout_spikes.size(-1):] != 100] for i in heldout_loss], dim=0).cpu().numpy()
+                    hi_nll = loss[:,:, :-n_heldout]
+                    ho_nll = loss[:,:, -n_heldout:]
+                    hi_lt_nll = loss[:,-1, :-n_heldout]
+                    ho_lt_nll = loss[:,-1, -n_heldout:]
 
-                    hi_co_bps = float(bits_per_spike(hi_rates, hi_spikes))
-                    ho_co_bps = float(bits_per_spike(ho_rates, ho_spikes))
-                    hi_lt_co_bps = float(bits_per_spike(torch.unsqueeze(hi_rates[:, -1, :], dim=-2), torch.unsqueeze(hi_spikes[:, -1, :], dim=-2)))
-                    ho_lt_co_bps = float(bits_per_spike(torch.unsqueeze(ho_rates[:, -1, :], dim=-2), torch.unsqueeze(ho_spikes[:, -1, :], dim=-2)))
+                    hi_rates = rates[:,:, :-n_heldout].exp()
+                    ho_rates = rates[:,:, -n_heldout:].exp()
+                    hi_co_bps = bits_per_spike(hi_rates, hi_spikes)
+                    ho_co_bps = bits_per_spike(ho_rates, ho_spikes)
+                    hi_lt_co_bps = bits_per_spike(hi_rates[:, -1:, :], hi_spikes[:, -1:, :])
+                    ho_lt_co_bps = bits_per_spike(ho_rates[:, -1:, :], ho_spikes[:, -1:, :])
                 
-                    results_dict['val hi_lt_nll'] = np.mean(hi_lt_nll)
-                    results_dict['val ho_lt_nll'] = np.mean(ho_lt_nll)
-                    results_dict['val hi_msk_nll'] = np.mean(hi_msk_nll)
-                    results_dict['val ho_msk_nll'] = np.mean(ho_msk_nll)
+                    results_dict['val hi_nll'] = hi_nll.mean()
+                    results_dict['val ho_nll'] = ho_nll.mean()
+                    results_dict['val hi_lt_nll'] = hi_lt_nll.mean()
+                    results_dict['val ho_lt_nll'] = ho_lt_nll.mean()
                     results_dict['val hi_co_bps'] = hi_co_bps
                     results_dict['val ho_co_bps'] = ho_co_bps
                     results_dict['val hi_lt_co_bps'] = hi_lt_co_bps
                     results_dict['val ho_lt_co_bps'] = ho_lt_co_bps
 
-                results_dict['val nll'] = np.mean(nll)
-                results_dict['val lt_nll'] = np.mean(lt_nll)
-                results_dict['val msk_nll'] = np.mean(msk_nll)
+                results_dict['val nll'] = loss.mean()
+                results_dict['val lt_nll'] = loss[:, -1:, :].mean()
                 
                 improved, ovrw_val, comp_metric = metric_comparison(config, comp_met_val, results_dict)
+                
                 if improved:
                     comp_met_val = ovrw_val
                     es_counter = 0
@@ -353,7 +350,7 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
             progress_bar.close()
             print('\n\n! Early Stopping !\n')
             break
-
+        
         progress_bar.update(1)
     progress_bar.display('', pos=2)
     progress_bar.close()
@@ -371,147 +368,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print('\n\nInterrupted')
         wandb_cleanup()
-
-
-# def run_cv_single(config, device, name):
-#     '''Trains a single model according to config using the train function.
-
-#     Args:
-#         config (CfgNode): The config to be used.
-#         device (torch.device): torch.device object containing the GPU to train
-#                                on.
-#         name (str): The model name, used to save model and log model reports.
-#     '''
-#     id = wandb.util.generate_id()
-#     train_dataloader, fold_dataloaders = get_dataloaders(config, 'cross_val')
-    
-#     wandb.init(
-#         id=id,
-#         dir=get_wandb_dir(),
-#         config=get_config_dict(config),
-#         project=config['wandb']['project'],
-#         entity=config['wandb']['entity']
-#     )
-
-#     name = get_run_name(config, name)
-
-#     for idx, train_sub_dl, val_sub_dl in fold_dataloaders:
-#         reset_wandb_env()
-#         run_name = f'{name}-{idx}'
-#         run = wandb.init(
-#             group=name,
-#             reinit=True,
-#             name=run_name,
-#             dir=get_wandb_dir(),
-#             config=get_config_dict(config),
-#             project=config['wandb']['project'],
-#             entity=config['wandb']['entity']
-#         )
-#         dataset_sub = train_sub_dl.dataset.dataset
-#         model = Transformer(config, dataset_sub, run_name).to(device)
-#         train(model, train_sub_dl, val_sub_dl, device)
-#         run.finish()
-
-#     wandb.init(
-#         id=id,
-#         name=name,
-#         group=name,
-#         dir=get_wandb_dir(),
-#         config=get_config_dict(config),
-#         project=config['wandb']['project'],
-#         entity=config['wandb']['entity']
-#     )
-#     dataset = train_dataloader.dataset
-#     model = Transformer(config, dataset, name).to(device)
-#     train(model, train_dataloader, None, device)
-#     test_eval(config, model)
-
-#     wandb_cleanup()
-#     torch.cuda.empty_cache()
-
-# def run_cv_sweep(config):
-#     id = wandb.util.generate_id()
-#     device = torch.device('cuda:0') # no args allowed, create local variable
-
-#     wandb.init(
-#         dir=get_wandb_dir(),
-#         config=get_config_dict(),
-#     )
-    
-#     wandb.config.update(
-#         get_config_dict(
-#             get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml')
-#         ),
-#         allow_val_change=True
-#     )
-
-#     config = get_wandb_config()
-#     name = wandb.run.name
-        
-#     set_seeds(config)
-
-#     notes = ''
-#     for group in config['wandb']['sweep'].keys():
-#         for key in config['wandb']['sweep'][group].keys():
-#             notes += '['+key+': '+str(config[group][key])+'] '
-
-#     print(f'\nSweep Parameters:\n  {notes}')
-
-#     train_dataloader, fold_dataloaders = get_dataloaders(config, 'cross_val')
-
-#     for idx, train_sub_dl, val_sub_dl in fold_dataloaders:
-#         run_name = f'{name}-{idx}'
-#         dataset_sub = train_sub_dl.dataset.dataset
-#         model = Transformer(config, dataset_sub, run_name).to(device)
-#         train(model, train_sub_dl, val_sub_dl, device, str(idx))
-
-#     dataset = train_dataloader.dataset
-#     model = Transformer(config, dataset, name).to(device)
-#     train(model, train_dataloader, None, device)
-#     test_eval(config, model)
-
-#     wandb_cleanup()
-#     torch.cuda.empty_cache()
-
-# def run_sweep(config):
-#     '''The function that is called by the wandb agent every time it starts a new
-#     run. Cannot have any arguments!
-#     '''
-#     device = torch.device('cuda:0') # no args allowed, create local variable
-#     torch.cuda.empty_cache()
-#     wandb.init(
-#         dir=get_wandb_dir(),
-#         config=get_config_dict())
-
-#     # Make sure wandb uses the same config as the original sweep, CLI args may have been used
-#     wandb.config.update(
-#         get_config_dict(get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml')),
-#         allow_val_change=True)
-
-#     config = get_wandb_config()
-#     set_seeds(config)
-
-#     notes = ''
-#     for group in config['wandb']['sweep'].keys():
-#         for key in config['wandb']['sweep'][group].keys():
-#             notes += '['+key+': '+str(config[group][key])+'] '
-#     wandb.run.notes = notes
-
-#     print('\nSweep Parameters:\n  '+notes)
-
-#     train_dataloader, val_dataloader = get_dataloaders(config, 'train_val')
-
-#     dataset = train_dataloader.dataset # dataset contains all the variables from the Dataset object
-#     if config['train']['val_type'] == 'random':
-#         dataset = dataset.dataset # subsets have the object hidden one level further
-        
-#     try:
-#         model = Transformer(config, dataset, wandb.run.name).to(device)
-#         train(model, train_dataloader, val_dataloader, device)
-
-#     except RuntimeError as e:
-#         del train_dataloader
-#         del val_dataloader
-#         del model
-#         del dataset
-#         torch.cuda.empty_cache()

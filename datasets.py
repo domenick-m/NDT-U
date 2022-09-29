@@ -112,7 +112,6 @@ def get_dataloaders(config, mode):
             train_indicies = list(shuffled_indicies[:split_index])
             val_indicies = list(shuffled_indicies[split_index:])
 
-
         train_dataloader = torch.utils.data.DataLoader(
             torch.utils.data.Subset(train_data, train_indicies),
             batch_size=config['train']['batch_size'],
@@ -121,11 +120,7 @@ def get_dataloaders(config, mode):
             shuffle=True,
         )
 
-        val_dataloader = torch.utils.data.DataLoader(
-            torch.utils.data.Subset(train_data, val_indicies),
-            batch_size=config['train']['e_batch_size'],
-            shuffle=False
-        )
+        val_dataloader = (train_data.spikes_heldin[val_indicies], train_data.spikes_heldout[val_indicies])
 
         return train_dataloader, val_dataloader
     
@@ -150,47 +145,11 @@ def get_dataloaders(config, mode):
                 shuffle=True
             )
 
-            tmp_val_dataloader = torch.utils.data.DataLoader(
-                torch.utils.data.Subset(train_data, val_indicies),
-                batch_size=config['train']['e_batch_size'],
-                shuffle=False
-            )
+            tmp_val_dataloader = (train_data.spikes_heldin[val_indicies], train_data.spikes_heldout[val_indicies])
 
             fold_dataloaders.append((idx, tmp_train_dataloader, tmp_val_dataloader))
 
         return train_dataloader, fold_dataloaders
-    
-    # elif mode == 'test':
-    #     test_data = Dataset(config, data_path, 'test')
-
-    #     test_dataloader = test_data.get_dataloader(generator, shuffle=False)
-    #     return test_dataloader
-
-    # elif mode == 'random':
-    #     trainval_data = Dataset(config, data_path, 'trainval')
-
-    #     n_samples = len(trainval_data)
-    #     shuf_gen = torch.Generator()
-    #     shuf_gen.manual_seed(config['setup']['seed'])
-    #     shuffled_inds = torch.randperm(n_samples, generator=shuf_gen)
-
-    #     split_ind = int((1 - config['train']['val_ratio']) * n_samples)
-    #     train_inds = list(shuffled_inds[:split_ind])
-    #     val_inds = list(shuffled_inds[split_ind:])
-
-    #     train_dataloader = torch.utils.data.DataLoader(
-    #         torch.utils.data.Subset(trainval_data, train_inds),
-    #         batch_size=config['train']['batch_size'],
-    #         generator=generator,
-    #         worker_init_fn=_init_fn,
-    #         shuffle=True)
-    #     val_dataloader = torch.utils.data.DataLoader(
-    #         torch.utils.data.Subset(trainval_data, val_inds),
-    #         batch_size=config['train']['batch_size'],
-    #         generator=generator,
-    #         shuffle=False)
-    #     return train_dataloader, val_dataloader
-
 
 
 def chop_data(data, chopsize, overlap, lag_bins, single_trail=False):

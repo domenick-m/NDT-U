@@ -15,8 +15,8 @@ config.setup = CN()
 config.setup.dataset = 'mc_rtt' # ['mc_rtt', 't5_cursor']
 config.setup.seed = 80891122 # Seed for initializing model, randomization of dataloader, etc..
 
-config.setup.gpu_idx = -1 # Index of GPU to use, if -1 then Auto-select
-config.setup.agent_gpus = [-1] # GPUs for agents to use, if -1 add agent to all GPUs
+config.setup.gpu = -1 # Index of GPU to use, if -1 then Auto-select
+config.setup.ag_gpus = [] # GPUs for agents to use, if -1 add agent to all GPUs
 
 config.setup.cfg_path = '' # 'configs/example_config.yaml' - The config to overwirte def_config with
 config.setup.data_dir = 'data/' # Where each datasets .h5 file is stored
@@ -41,11 +41,11 @@ config.train.lag = 40 # ms to lag kinematic data by
 config.train.smth_std = 60 # ms std to smooth rates by when decoding
 
 config.train.batch_size = 2048 # Number of samples to compute loss with
-config.train.e_batch_size = 2048 # Number of samples to compute loss with
-config.train.epochs = 50000 # Number of full passes through dataset
+config.train.e_batch_size = 128 # Number of samples to compute loss with
+config.train.epochs = 10000 # Number of full passes through dataset
 
-config.train.val_interval = 20 # Epochs between running on the validation set
-config.train.val_type = 'cross_val' # ['random', 'last', 'cross_val']
+config.train.val_interval = 5 # Epochs between running on the validation set
+config.train.val_type = 'random' # ['random', 'last', 'cross_val']
 config.train.n_folds = 5 # Number of folds (K) to use with K-folds cv
 
 config.train.sweep_enabled = False # Whether or not wandb hyperparameter sweep is enabled, if False running train.py will train a single model
@@ -105,7 +105,7 @@ config.model.context_backward = 25 # How many timesteps in the past can a timest
 config.wandb = CN()
 config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.entity = 'emory-bg2' # The wandb project the run should be stored in
-config.wandb.project = 'deberta_test' # The wandb project the run should be stored in
+config.wandb.project = 'batch_size_test' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 config.wandb.log_local = True # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt'
 config.wandb.silent = False # ['true', 'false'] If 'true' wandb does not print anything
@@ -116,18 +116,20 @@ config.wandb.sweep = CN()
 config.wandb.sweep.setup = CN()
 
 config.wandb.sweep.train = CN()
-config.wandb.sweep.train.warmup_steps = [100, 1000, 2500, 5000]
-config.wandb.sweep.train.weight_decay = [5.0e-04, 5.0e-05, 5.0e-06]
-config.wandb.sweep.train.init_lr = [0.0001, 0.0005, 0.001, 0.005]
+# config.wandb.sweep.train.batch_size = [128, 256, 512, 1024, 2048, 4096]
+# config.wandb.sweep.train.e_batch_size = [128, 256, 512, 1024, 2048, 4096]
+# config.wandb.sweep.train.warmup_steps = [100, 1000, 2500, 5000]
+# config.wandb.sweep.train.weight_decay = [5.0e-04, 5.0e-05, 5.0e-06]
+# config.wandb.sweep.train.init_lr = [0.0001, 0.0005, 0.001, 0.005]
 
 config.wandb.sweep.model = CN()
-config.wandb.sweep.model.undivided_attn = [True, False]
-config.wandb.sweep.model.n_heads = [2, 5]
-config.wandb.sweep.model.hidden_size = [32, 64, 128, 256]
-config.wandb.sweep.model.dropout = [0.3, 0.4, 0.5, 0.6, 0.7]
-config.wandb.sweep.model.dropout_rates = [0.3, 0.4, 0.5, 0.6, 0.7]
-config.wandb.sweep.model.dropout_embedding = [0.3, 0.4, 0.5, 0.6, 0.7]
-config.wandb.sweep.model.dropout_attention = [0.3, 0.4, 0.5, 0.6, 0.7]
-config.wandb.sweep.model.context_forward = [10, 20, 30]
-config.wandb.sweep.model.context_backward = [10, 20, 30]
-config.wandb.sweep.model.normal_init = [True, False]
+# config.wandb.sweep.model.undivided_attn = [True, False]
+# config.wandb.sweep.model.n_heads = [2, 5]
+config.wandb.sweep.model.hidden_size = [16, 32, 64, 128, 256]
+# config.wandb.sweep.model.dropout = [0.3, 0.4, 0.5, 0.6, 0.7]
+# config.wandb.sweep.model.dropout_rates = [0.3, 0.4, 0.5, 0.6, 0.7]
+# config.wandb.sweep.model.dropout_embedding = [0.3, 0.4, 0.5, 0.6, 0.7]
+# config.wandb.sweep.model.dropout_attention = [0.3, 0.4, 0.5, 0.6, 0.7]
+# config.wandb.sweep.model.context_forward = [10, 20, 30]
+# config.wandb.sweep.model.context_backward = [10, 20, 30]
+# config.wandb.sweep.model.normal_init = [True, False]
