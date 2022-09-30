@@ -51,61 +51,53 @@ def start_tmux_sweep(ag_gpus):
         n_gpus = int(subprocess.getoutput('nvidia-smi --list-gpus | wc -l'))
         pane = window.attached_pane
         pane.send_keys('ndt;c')
-        panes = [pane]
         for i in range(n_gpus - 1):
             pane = window.split_window(vertical=True)
             pane.send_keys('ndt;c')
-            panes.append(pane)
         window.select_layout('even-vertical')
 
         if ag_gpus == []:
-            panes[0].send_keys(f'./train_cv.py --sweep -y --gpu -1')
+            window.select_pane(0).send_keys(f'./train.py --sweep -y --gpu -1')
         else:
             if ag_gpus == [-1]:
                 ag_gpus = [i for i in range(n_gpus)]
 
-            for idx, gpu in enumerate(ag_gpus):
-                if idx == 0: 
-                    panes[idx].send_keys(f'./train_cv.py --sweep -y --gpu {gpu}')
+            for gpu in ag_gpus:
+                if gpu == 0: 
+                    window.select_pane(gpu).send_keys(f'./train.py --sweep -y --gpu {gpu}')
                     time.sleep(1)
-                else: panes[idx].send_keys(f'./train_cv.py --add --gpu {gpu}')
+                else: 
+                    window.select_pane(gpu).send_keys(f'./train.py --add --gpu {gpu}')
+        
         server.attach_session(target_session="ndt_sweep")
+
     else:
         print("Session exists! \nCall ./train.py --kill to end it.")
-    exit()
+
 
 def add_tmux_agents(ag_gpus):
-    server = libtmux.Server()
-    session = server.find_where({"session_name": "ndt_sweep"})
-    print(session)
-    # if not subprocess.getoutput('tmux has-session -t ndt_sweep'):
-    #     server = libtmux.Server()
-    #     session = server.new_session(session_name="ndt_sweep", kill_session=True, attach=False)
-    #     window = session.attached_window
+    if 'TMUX' in os.environ:
+        server = libtmux.Server()
+        try: session = server.find_where({"session_name": "ndt_sweep"})
+        except: 
+            print("Session: 'ndt_sweep' not found.")
+            return
 
-    #     n_gpus = int(subprocess.getoutput('nvidia-smi --list-gpus | wc -l'))
+        window = session.attached_window
+        if ag_gpus == []:
+            ag_gpus = [window.attached_pane.get('pane_index')]
 
-    #     panes = [window.attached_pane]
-    #     for i in range(n_gpus - 1):
-    #         panes.append(window.split_window(vertical=True))
-    #     window.select_layout('even-vertical')
+        if ag_gpus == [-1]:
+            ag_gpus = [window.attached_pane.get('pane_index')]
+            for pane in server._list_panes():
+                if pane['pane_current_command'] == 'bash':
+                    ag_gpus.append(pane['pane_index'])
 
-    #     if ag_gpus == []:
-    #         panes[0].send_keys(f'ndt; ./train_cv.py --sweep -y --gpu -1')
-    #     else:
-    #         if ag_gpus == [-1]:
-    #             ag_gpus = [i for i in range(n_gpus)]
+        for idx in ag_gpus:
+            pane = window.select_pane(idx)
+            pane.send_keys(f'./train.py --add --gpu {idx}')
 
-    #         for idx, gpu in enumerate(ag_gpus):
-    #             if idx == 0: 
-    #                 panes[idx].send_keys(f'ndt; ./train_cv.py --sweep -y --gpu {gpu}')
-    #                 time.sleep(1)
-    #             else: panes[idx].send_keys(f'ndt; ./train_cv.py --add --gpu {gpu}')
-    #     server.attach_session(target_session="ndt_sweep")
-    # else:
-    #     print("No tmux sessions availiable!")
-    #     exit()
-    exit()
+    else: print('This command must be ran within a tmux session.')
 
 
 def bits_per_spike(rates, spikes):
@@ -329,7 +321,7 @@ def set_sweep_config(config, arg_dict):
         'project' : config['wandb']['project'],
         'entity' : config['wandb']['entity'],
         'method' : config['train']['sweep_type'],
-        'program' : 'train_cv.py',
+        'program' : 'train.py',
         'command' : command,
         'parameters' : sweep_dict
     }
@@ -773,7 +765,7 @@ def print_train_configs(config, args):
         config (dict): A config object.
         args (dict): The CLI args in dict form.
     '''
-    if '--add' in args:
+    if '--add' in args or '--tadd' in args:
         return None
 
     def format_config(name, value):
@@ -801,6 +793,7 @@ def print_train_configs(config, args):
         format_config('gpu', config.setup.gpu),
         format_config('ag_gpus', config.setup.ag_gpus),
         format_config('log_eps', config.setup.log_eps),
+        format_config('comp_metric', config.setup.comp_metric),
         format_config('save_model', config.setup.save_model),
         '', wandb_box[0], wandb_box[1], wandb_box[2],
         format_config('entity', config.wandb.entity),
@@ -822,11 +815,13 @@ def print_train_configs(config, args):
         format_config('initrange', config.model.initrange),
         format_config('context_forward', config.model.context_forward),
         format_config('context_backward', config.model.context_backward),
-        '', format_config('dropout', config.model.dropout),
+        format_config('dropout', config.model.dropout),
+        # '', format_config('dropout', config.model.dropout),
         format_config('dropout_rates', config.model.dropout_rates),
         format_config('dropout_embedding', config.model.dropout_embedding),
         format_config('dropout_attention', config.model.dropout_attention),
-        '', format_config('loss_ratio', config.model.loss_ratio),
+        format_config('loss_ratio', config.model.loss_ratio),
+        # '', format_config('loss_ratio', config.model.loss_ratio),
         format_config('mask_ratio', config.model.mask_ratio),
         format_config('random_ratio', config.model.random_ratio),
     ]

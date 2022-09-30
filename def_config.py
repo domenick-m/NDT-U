@@ -16,7 +16,7 @@ config.setup.dataset = 'mc_rtt' # ['mc_rtt', 't5_cursor']
 config.setup.seed = 80891122 # Seed for initializing model, randomization of dataloader, etc..
 
 config.setup.gpu = -1 # Index of GPU to use, if -1 then Auto-select
-config.setup.ag_gpus = [] # GPUs for agents to use, if -1 add agent to all GPUs
+config.setup.ag_gpus = [-1] # GPUs for agents to use, if -1 add agent to all GPUs
 
 config.setup.cfg_path = '' # 'configs/example_config.yaml' - The config to overwirte def_config with
 config.setup.data_dir = 'data/' # Where each datasets .h5 file is stored
@@ -42,7 +42,7 @@ config.train.smth_std = 60 # ms std to smooth rates by when decoding
 
 config.train.batch_size = 2048 # Number of samples to compute loss with
 config.train.e_batch_size = 128 # Number of samples to compute loss with
-config.train.epochs = 10000 # Number of full passes through dataset
+config.train.epochs = 100 # Number of full passes through dataset
 
 config.train.val_interval = 5 # Epochs between running on the validation set
 config.train.val_type = 'random' # ['random', 'last', 'cross_val']
