@@ -59,12 +59,17 @@ import signal
 import sys
 import subprocess
 
+from create_local_t5data import make_data
+
 
 def main():
     # Parse arguments
     arg_dict = parse_args(sys.argv[1:])
     # Overwrite default config with CLI args and dataset_config
     config = get_config(arg_dict)
+
+    make_data(config)
+    return
     # If data does not exist, download it
     verify_dataset(config) # makes sure datasets are downloaded, if not then prompt
     print_train_configs(config, arg_dict) # prints the config if starting a single run or sweep
@@ -361,7 +366,11 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
 
 if __name__ == "__main__":
     try:
+        # main()
+        import time
+        start_time = time.time()
         main()
+        print("--- %s seconds ---" % (time.time() - start_time))
     except KeyboardInterrupt:
         print('\n\nInterrupted')
         wandb_cleanup()
