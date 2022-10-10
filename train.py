@@ -21,7 +21,7 @@ import subprocess
 # #────#
 from transformer import Transformer
 # from transformer_deberta import Transformer
-from utils import (get_config,
+from utils_f import (get_config,
                    metric_comparison,
                    bits_per_spike,
                    get_config_dict,
@@ -51,15 +51,16 @@ from utils import (get_config,
 # or add an agent to a hyperparameter sweep. It has optional arguments that can
 # be found by running 'python train.py -h'.
 
-from datasets import verify_dataset
+# from datasets import verify_dataset
 from datasets import get_dataloaders
 
 # Will beome 'train.py'
 import signal
 import sys
 import subprocess
+from test import test
 
-from create_local_t5data import make_data
+from utils.data.create_local_t5data import get_trial_data
 
 
 def main():
@@ -68,10 +69,8 @@ def main():
     # Overwrite default config with CLI args and dataset_config
     config = get_config(arg_dict)
 
-    make_data(config)
-    return
     # If data does not exist, download it
-    verify_dataset(config) # makes sure datasets are downloaded, if not then prompt
+    # verify_dataset(config) # makes sure datasets are downloaded, if not then prompt
     print_train_configs(config, arg_dict) # prints the config if starting a single run or sweep
     model_name = arg_dict['--name'] # if no name arg was passed then this is None
 
@@ -132,7 +131,8 @@ def run_training(config, device, name):
 
     train_dataloader, val_dataloader = get_dataloaders(
         config, 
-        'cross_val' if cross_val_enabled else 'train_val'
+        'train_val'
+        # 'cross_val' if cross_val_enabled else 'train_val'
     )
 
     if cross_val_enabled:
@@ -252,7 +252,12 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
         results_dict = {}
 
         # Each step is one batch
-        for spikes, heldout_spikes in train_dataloader:
+        for batch in train_dataloader:
+            if model.has_heldout:
+                spikes, heldout_spikes, names = batch
+            else:
+                spikes, names = batch
+                heldout_spikes = None
 
             # preprocess_batch zero masks, randomizes, and sets the labels for masked and unmaksed
             masked_spikes, labels = model.preprocess_batch(
@@ -299,14 +304,14 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
                 labels = spikes.clone()
                 hi_spikes = spikes.clone()
                 
-                if config['train']['heldout']:
+                if model.has_heldout:
                     labels = torch.cat([labels, ho_spikes], -1)
                     spikes = torch.cat([spikes, torch.zeros_like(ho_spikes, device=device)], -1)
 
                 with torch.cuda.amp.autocast():
                     loss, rates = model(spikes, labels)
 
-                if config['train']['heldout']:
+                if model.has_heldout:
                     n_heldout = ho_spikes.shape[-1]
 
                     hi_nll = loss[:,:, :-n_heldout]
@@ -370,7 +375,7 @@ if __name__ == "__main__":
         import time
         start_time = time.time()
         main()
-        print("--- %s seconds ---" % (time.time() - start_time))
+        print("\n--- %s seconds ---" % (time.time() - start_time))
     except KeyboardInterrupt:
         print('\n\nInterrupted')
         wandb_cleanup()

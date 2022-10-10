@@ -32,15 +32,31 @@ config.setup.log_eps = 1e-8 # The epsilon to be added to log, should be really s
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.data = CN()
-config.data.dir = '/home/dmifsud/Projects/NDT-U/data'   # Path to data directory
+config.data.dir = '/home/dmifsud/Projects/NDT-U/data'   # Path to data directory, should contain sessions.csv
 
-# [('session',[ol_blocks],[cl_blocks])] Data used for training 
-config.data.train = [
-   ('t5.2021.06.07',[14],[15])
-] 
-# [('session',[ol_blocks],[cl_blocks])] Data used for testing
-config.data.test = [ 
-   ('t5.2021.06.07',[],[16]), ('t5.2021.06.08',[],[17]) 
+# Sessions used for training 
+config.data.pretrain_sessions = [
+   't5.2021.05.05',
+   't5.2021.05.17',
+   # 't5.2021.05.19',
+   # 't5.2021.05.24',
+   # 't5.2021.05.26',
+   # 't5.2021.06.02',
+   # 't5.2021.06.04',
+   # 't5.2021.06.07',
+   # 't5.2021.06.23',
+   # 't5.2021.06.28',
+   # 't5.2021.06.30',
+   # 't5.2021.07.07',
+   # 't5.2021.07.08',
+   # 't5.2021.07.12',
+   # 't5.2021.07.14',
+   # 't5.2021.07.19',
+   # 't5.2021.07.21',
+]   
+# Sessions used for testing 
+config.data.finetune_sessions = [
+   't5.2021.07.21'
 ] 
 
 config.data.bin_size = 10   # ms to bin spikes by
@@ -50,11 +66,11 @@ config.data.overlap = 25   # Overlapping bins between chops
 config.data.lag = 40   # ms to lag behavior by 
 config.data.smth_std = 60   # ms std to smooth rates by when decoding
 
-config.data.failed_trials = False   # Should unsuccessful trials be used in training decoder
-config.data.center_trials = False   # Should return (center target) trials be used in training decoder
+config.data.center_trials = False   # Should return (center target) trials be used in test evaluation
 config.data.trial_len = 2000   # ms after 'start_time' that a trial should span for test evaluation
 
 config.data.rem_xcorr = True   # Whether or not correlated channels should be removed.
+config.data.heldout_pct = 0.25   # What percentage of channels should be heldout
 
 
 

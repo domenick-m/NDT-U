@@ -26,46 +26,170 @@ from nlb_tools.make_tensors import (
     make_train_input_tensors,
     make_eval_input_tensors,
     make_eval_target_tensors)
-from utils import set_seeds
+from utils_f import set_seeds
+from data.t5_dataset import T5CursorDataset
+
 
 import warnings; warnings.simplefilter('ignore')
 '''────────────────────────────── datasets.py ───────────────────────────────'''
-# This file contains the class Dataset and the methods for downloading the
-# datasets.
 
-'''
-   ─────────────────────── DANDI API DATASET STRINGS ────────────────────────
-'''
-# Hide NaN warnings for test data from nlb_tools
-logging.basicConfig(level=logging.ERROR)
 
-# Each dataset has a unique ID that allows us to directly download w/o DandiCLI
-api_url = ('https://api.dandiarchive.org/api/assets/', '/download/')
-id_dict = dict(
-    mc_maze = dict(
-        mc_maze_train = '26e85f09-39b7-480f-b337-278a8f034007',
-        mc_maze_test = '1bd112a4-5ec5-4033-ac30-d88e70e993d9'),
-    mc_rtt = dict(
-        mc_rtt_train = '2ae6bf3c-788b-4ece-8c01-4b4a5680b25b',
-        mc_rtt_test = '648a7418-98e8-4413-ba97-3772dd325ecc'),
-    dmfc_rsg = dict(
-        dmfc_rsg_train = '5e92e8db-5212-4607-8b90-3f5a5e319537',
-        dmfc_rsg_test = '6718e18a-944f-40f2-8358-d5ff562fb0a0'),
-    area2_bump = dict(
-        area2_bump_train = 'ded26b6c-418d-43f5-8a37-dfd072c2dbd4',
-        area2_bump_test = 'f907b288-a9b4-4c6e-9d66-6812f306e253'),
-    mc_maze_small = dict(
-        mc_maze_small_train = '7821971e-c6a4-4568-8773-1bfa205c13f8',
-        mc_maze_small_test = '544a660e-a173-46f3-985a-60fd67e6ae1f'),
-    mc_maze_medium = dict(
-        mc_maze_medium_train = '7ef450a8-8684-42e2-8598-cd38ca2b2e50',
-        mc_maze_medium_test = 'ac554f8e-7008-4030-9640-6f1cf838a23c'),
-    mc_maze_large = dict(
-        mc_maze_large_train = 'e67b57b2-e9ad-4d95-b9e3-1262997360dc',
-        mc_maze_large_test = 'f42a7bd1-71f4-4972-84a7-2cd1dfbed8a1'))
-'''
-────────────────────────────────────────────────────────────────────────────────
-'''
+
+datasets = {}
+
+def populate_datasets(config):
+    ''' Create dataset object for each session and store
+    '''
+    if datasets == {}:
+        for session in [*config.data.pretrain_sessions, *config.data.finetune_sessions]:
+            if not session in datasets:
+                datasets[session] = T5CursorDataset(f'{config.data.dir}/{session}.mat')
+
+def chop(data, seq_len, overlap):
+    ''' Chop data function
+    '''
+    shape = (int((data.shape[0] - overlap) / (seq_len - overlap)), seq_len, data.shape[-1])
+    strides = (data.strides[0] * (seq_len - overlap), data.strides[0], data.strides[1])
+    return np.lib.stride_tricks.as_strided(data, shape, strides).copy().astype('f')
+
+def get_pretraining_data(config):
+    ''' Get spikes to train NDT with
+    '''
+    # Cache datasets for later use
+    populate_datasets(config)
+
+    chopped_spikes, session_names = [], []
+    for session in config.data.pretrain_sessions:
+        dataset = copy.deepcopy(datasets[session]) # do not want to run xcorr on test data
+
+        if config.data.rem_xcorr: 
+            dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
+
+        dataset.resample(0.01) # convert ms to sec
+        spikes = dataset.data.spikes.to_numpy()
+        spikes = chop(spikes, config.data.seq_len, config.data.overlap)
+        names = [session for i in range(spikes.shape[0])]
+
+        chopped_spikes.append(torch.from_numpy(spikes))
+        session_names.append(names)
+
+    return torch.cat(chopped_spikes, 0), np.concatenate(session_names, 0)
+    # Should this be removed ^^
+
+    # Add check to see if heldout has the same distribution across datasets
+        # at the same time add a caching system for params / datset to save a local copy
+        # this involves saving the paramters in the config that affect the dataset and if they have changed,
+        #  store another copy
+
+def get_alignment_matricies(config):
+    ''' 
+    '''
+    # Cache datasets for later use
+    populate_datasets(config)
+
+    session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
+
+    session_csv.loc[session_csv['session_id'] == 3, 'A']
+
+    for session in config.data.pretrain_sessions:
+        failed_trials = ~dataset.trial_info['is_successful'] 
+        center_trials = dataset.trial_info['is_center_target'] if not config.data.center_trials else False
+        
+        trial_data = dataset.make_trial_data(
+            align_field='start_time',
+            align_range=(
+                -config.data.seq_len * config.data.bin_size + config.data.bin_size, # start align
+                config.data.trial_len + lag if control == 'ol_blocks' else None # end_align
+            ),
+            allow_overlap=True,
+            ignored_trials=failed_trials | center_trials
+        )
+
+        trial_data.sort_index(axis=1, inplace=True)
+        trial_data['X&Y'] = list(zip(trial_data['targetPos']['x'], trial_data['targetPos']['y']))
+        trial_data['condition'] = 0
+
+        for xy, id in list(zip(trial_data['X&Y'].unique(), np.arange(1,9))):    
+            indices = trial_data.index[trial_data['X&Y'] == xy]
+            trial_data.loc[indices, 'condition'] = id
+
+        trials[session][control] = {}
+        for block in blocks:
+            trials[session][control][block] = {}
+            block_mask = trial_data['blockNums'].isin([block]).values.squeeze()
+            for tr_id, trial in trial_data[block_mask].groupby('trial_id'):
+                trials[session][control][block][tr_id] = trial
+    # return torch.cat(chopped_spikes, 0), torch.cat(session_names, 0)
+
+    
+
+class Dataset(data.Dataset):
+    def __init__(self, config):
+        '''init Dataset
+
+        Args:
+            config (dict): A config object.
+            filename (str): path to the dataset.h5 file.
+            mode (str): ['test', 'train' , 'val', 'trainval'] The dataset type.
+        '''
+        super().__init__()
+        device = torch.device('cuda:0')
+
+        chopped_spikes, session_names = get_pretraining_data(config)
+
+        self.names = session_names
+        self.n_samples = chopped_spikes.shape[0]
+        self.n_channels = chopped_spikes.shape[-1]
+
+        self.has_heldout = config.data.heldout_pct > 0.0
+        
+        # If the percentage of heldout channels is above 0, hold out some channels
+        if self.has_heldout: 
+            n_heldout = int(config.data.heldout_pct * self.n_channels)
+
+            np.random.seed(config.setup.seed)
+            heldout_channels = np.random.choice(self.n_channels, n_heldout, replace=False)
+            heldin_channels = torch.ones(self.n_channels, dtype=bool)
+            heldin_channels[heldout_channels] = False
+
+            self.heldin_spikes = chopped_spikes[:, :, heldin_channels].to(device)
+            self.heldout_spikes = chopped_spikes[:, :, heldout_channels].to(device)
+
+            self.n_heldin = self.n_channels - n_heldout
+            self.n_heldout = n_heldout
+            self.max_train_spks = self.heldin_spikes.max().item() + 3
+        else:
+            self.spikes = chopped_spikes.to(device)
+            self.max_train_spks = self.spikes.max().item() + 3
+
+    def __len__(self):
+        '''
+        Returns:
+            int: The number of samples or trials.
+        '''
+        return self.n_samples
+
+    def __getitem__(self, index):
+        '''
+        Args:
+            index (int): Index into the batches.
+        Returns:
+            spikes_heldin (np.ndarray): Spikes held-in.
+            spikes_heldout (np.ndarray): Spikes held-out.
+            spikes_all_fp (np.ndarray): Spikes forward pass.
+        '''
+        if self.has_heldout: 
+            return self.heldin_spikes[index], self.heldout_spikes[index], self.names[index]
+        else:
+            return self.spikes[index], self.names[index]
+
+    def get_dataloader(self, generator, shuffle=True):
+        return data.DataLoader(
+            self,
+            batch_size=self.config['train']['batch_size'],
+            generator=generator,
+            shuffle=shuffle
+        )
 
 def get_dataloaders(config, mode):
     ''' Creates Dataset objects and creates the DataLoaders from them.
@@ -82,14 +206,6 @@ def get_dataloaders(config, mode):
                                                   DataLoader. In 'none' this is
                                                   None.
     '''
-    data_path = '{0}{1}_{2}_{3}_{4}.h5'.format(
-        config["setup"]["data_dir"], 
-        config["setup"]["dataset"], 
-        config["train"]["seq_len"], 
-        config["train"]["overlap"], 
-        config["train"]["lag"]
-    )
-
     generator = torch.Generator()
     generator.manual_seed(config['setup']['seed'])
 
@@ -97,18 +213,16 @@ def get_dataloaders(config, mode):
         set_seeds(config)
     
     if mode == 'train_val':
-        train_data = Dataset(config, data_path, 'train')
-
-        n_samples = len(train_data)
-        split_index = int(0.8 * n_samples)
+        train_data = Dataset(config)
+        split_index = int(0.8 * train_data.n_samples)
 
         if config['train']['val_type'] == 'last':
             # Dataset is last 20% of training data
             train_indicies = [i for i in range(0, split_index)]
-            val_indicies = [i for i in range(split_index, n_samples)]
+            val_indicies = [i for i in range(split_index, train_data.n_samples)]
 
         if config['train']['val_type'] == 'random':
-            shuffled_indicies = torch.randperm(n_samples, generator=generator)
+            shuffled_indicies = torch.randperm(train_data.n_samples, generator=generator)
             train_indicies = list(shuffled_indicies[:split_index])
             val_indicies = list(shuffled_indicies[split_index:])
 
@@ -120,12 +234,16 @@ def get_dataloaders(config, mode):
             shuffle=True,
         )
 
-        val_dataloader = (train_data.spikes_heldin[val_indicies], train_data.spikes_heldout[val_indicies])
+        if train_data.has_heldout:
+            val_data = (train_data.heldin_spikes[val_indicies], train_data.heldout_spikes[val_indicies]) 
+        else:
+            val_data = train_data.spikes[val_indicies]
 
-        return train_dataloader, val_dataloader
+        return train_dataloader, val_data
     
+    # KFOLDS should also have a val set
     elif mode == 'cross_val':
-        train_data = Dataset(config, data_path, 'train')
+        train_data = Dataset(config)
 
         train_dataloader = train_data.get_dataloader(generator, shuffle=True)
         fold_dataloaders = []
@@ -150,6 +268,92 @@ def get_dataloaders(config, mode):
             fold_dataloaders.append((idx, tmp_train_dataloader, tmp_val_dataloader))
 
         return train_dataloader, fold_dataloaders
+
+#  OLD
+
+# def get_dataloaders(config, mode):
+#     ''' Creates Dataset objects and creates the DataLoaders from them.
+
+#     Args:
+#         config (dict): A config object.
+#         mode (str): ['original', 'random', 'test', 'none'] Which validation set
+#                     shold be used. Original is the nlb given validation set,
+#                     random is a random subset of the combined train and
+#                     validation set, none is no validation set
+#     Returns:
+#         train_dataloader (DataLoader): The training set DataLoader.
+#         (test/val)_dataloader (DataLoader, None): The test or validation set
+#                                                   DataLoader. In 'none' this is
+#                                                   None.
+#     '''
+#     data_path = '{0}{1}_{2}_{3}_{4}.h5'.format(
+#         config["setup"]["data_dir"], 
+#         config["setup"]["dataset"], 
+#         config["train"]["seq_len"], 
+#         config["train"]["overlap"], 
+#         config["train"]["lag"]
+#     )
+
+#     generator = torch.Generator()
+#     generator.manual_seed(config['setup']['seed'])
+
+#     def _init_fn(worker_id):
+#         set_seeds(config)
+    
+#     if mode == 'train_val':
+#         train_data = Dataset(config, data_path, 'train')
+
+#         n_samples = len(train_data)
+#         split_index = int(0.8 * n_samples)
+
+#         if config['train']['val_type'] == 'last':
+#             # Dataset is last 20% of training data
+#             train_indicies = [i for i in range(0, split_index)]
+#             val_indicies = [i for i in range(split_index, n_samples)]
+
+#         if config['train']['val_type'] == 'random':
+#             shuffled_indicies = torch.randperm(n_samples, generator=generator)
+#             train_indicies = list(shuffled_indicies[:split_index])
+#             val_indicies = list(shuffled_indicies[split_index:])
+
+#         train_dataloader = torch.utils.data.DataLoader(
+#             torch.utils.data.Subset(train_data, train_indicies),
+#             batch_size=config['train']['batch_size'],
+#             generator=generator,
+#             worker_init_fn=_init_fn,
+#             shuffle=True,
+#         )
+
+#         val_dataloader = (train_data.spikes_heldin[val_indicies], train_data.spikes_heldout[val_indicies])
+
+#         return train_dataloader, val_dataloader
+    
+#     elif mode == 'cross_val':
+#         train_data = Dataset(config, data_path, 'train')
+
+#         train_dataloader = train_data.get_dataloader(generator, shuffle=True)
+#         fold_dataloaders = []
+
+#         kf = KFold(
+#             n_splits=config['train']['n_folds'], 
+#             random_state=config['setup']['seed'], 
+#             shuffle=True
+#         )
+
+#         for idx, (train_indicies, val_indicies) in enumerate(kf.split(train_data)):
+#             tmp_train_dataloader = torch.utils.data.DataLoader(
+#                 torch.utils.data.Subset(train_data, train_indicies),
+#                 batch_size=config['train']['batch_size'],
+#                 generator=generator,
+#                 worker_init_fn=_init_fn,
+#                 shuffle=True
+#             )
+
+#             tmp_val_dataloader = (train_data.spikes_heldin[val_indicies], train_data.spikes_heldout[val_indicies])
+
+#             fold_dataloaders.append((idx, tmp_train_dataloader, tmp_val_dataloader))
+
+#         return train_dataloader, fold_dataloaders
 
 
 def chop_data(data, chopsize, overlap, lag_bins, single_trail=False):
@@ -186,108 +390,108 @@ def chop_data(data, chopsize, overlap, lag_bins, single_trail=False):
         ))
 
 
-class Dataset(data.Dataset):
-    def __init__(self, config, filename, mode):
-        '''init Dataset
+# class Dataset(data.Dataset):
+#     def __init__(self, config, filename, mode):
+#         '''init Dataset
 
-        Args:
-            config (dict): A config object.
-            filename (str): path to the dataset.h5 file.
-            mode (str): ['test', 'train' , 'val', 'trainval'] The dataset type.
-        '''
-        super().__init__()
+#         Args:
+#             config (dict): A config object.
+#             filename (str): path to the dataset.h5 file.
+#             mode (str): ['test', 'train' , 'val', 'trainval'] The dataset type.
+#         '''
+#         super().__init__()
         
-        with h5py.File(filename, 'r') as h5file:
-            h5dict = h5_to_dict(h5file)
-            self.config = config
-            self.mode = mode
+#         with h5py.File(filename, 'r') as h5file:
+#             h5dict = h5_to_dict(h5file)
+#             self.config = config
+#             self.mode = mode
 
-            device = torch.device('cuda:0')
+#             device = torch.device('cuda:0')
 
-            def set_sizes(self):
-                ''' Helper function that assigns the number of samples, trial
-                length, forward pass length, number of heldin neurons, and
-                number of heldout neurons.
-                '''
-                self.n_samples = self.spikes_heldin.shape[0]
-                self.n_heldin = self.spikes_heldin.shape[2]
-                self.n_heldout = self.spikes_heldout.shape[2]
-                self.n_neurons = self.n_heldin + self.n_heldout
+#             def set_sizes(self):
+#                 ''' Helper function that assigns the number of samples, trial
+#                 length, forward pass length, number of heldin neurons, and
+#                 number of heldout neurons.
+#                 '''
+#                 self.n_samples = self.spikes_heldin.shape[0]
+#                 self.n_heldin = self.spikes_heldin.shape[2]
+#                 self.n_heldout = self.spikes_heldout.shape[2]
+#                 self.n_neurons = self.n_heldin + self.n_heldout
                 
-                self.max_train_spks = h5dict['train_spikes_heldin'].max().item() + 3
+#                 self.max_train_spks = h5dict['train_spikes_heldin'].max().item() + 3
 
-            if mode == 'train':
-                self.spikes_heldin = torch.Tensor(h5dict['train_spikes_heldin'].astype(np.float32)).to(device)
-                self.spikes_heldout = torch.Tensor(h5dict['train_spikes_heldout'].astype(np.float32)).to(device)
+#             if mode == 'train':
+#                 self.spikes_heldin = torch.Tensor(h5dict['train_spikes_heldin'].astype(np.float32)).to(device)
+#                 self.spikes_heldout = torch.Tensor(h5dict['train_spikes_heldout'].astype(np.float32)).to(device)
 
-                set_sizes(self)
+#                 set_sizes(self)
 
-            elif mode == 'test':
-                self.spikes_heldin = torch.Tensor(h5dict['test_spikes_heldin'].astype(np.float32)).to(device)
-                self.spikes_heldout = torch.Tensor(h5dict['test_spikes_heldout'].astype(np.float32)).to(device)
+#             elif mode == 'test':
+#                 self.spikes_heldin = torch.Tensor(h5dict['test_spikes_heldin'].astype(np.float32)).to(device)
+#                 self.spikes_heldout = torch.Tensor(h5dict['test_spikes_heldout'].astype(np.float32)).to(device)
 
-                set_sizes(self)
+#                 set_sizes(self)
 
-    def __len__(self):
-        '''
-        Returns:
-            int: The number of samples or trials.
-        '''
-        return self.spikes_heldin.shape[0]
+#     def __len__(self):
+#         '''
+#         Returns:
+#             int: The number of samples or trials.
+#         '''
+#         return self.spikes_heldin.shape[0]
 
-    def __getitem__(self, index):
-        '''
-        Args:
-            index (int): Index into the batches.
-        Returns:
-            spikes_heldin (np.ndarray): Spikes held-in.
-            spikes_heldout (np.ndarray): Spikes held-out.
-            spikes_all_fp (np.ndarray): Spikes forward pass.
-        '''
-        return (
-            self.spikes_heldin[index],
-            self.spikes_heldout[index]
-        )
+#     def __getitem__(self, index):
+#         '''
+#         Args:
+#             index (int): Index into the batches.
+#         Returns:
+#             spikes_heldin (np.ndarray): Spikes held-in.
+#             spikes_heldout (np.ndarray): Spikes held-out.
+#             spikes_all_fp (np.ndarray): Spikes forward pass.
+#         '''
+#         return (
+#             self.spikes_heldin[index],
+#             self.spikes_heldout[index]
+#         )
 
-    def clip_max(self, max, indicies):
-        self.spikes_heldin[indicies] = torch.clamp(self.spikes_heldin[indicies], max=max)
+#     def clip_max(self, max, indicies):
+#         self.spikes_heldin[indicies] = torch.clamp(self.spikes_heldin[indicies], max=max)
 
-    def get_dataloader(self, generator, shuffle=True):
-        return data.DataLoader(self,
-            batch_size=self.config['train']['batch_size'],
-            generator=generator,
-            shuffle=shuffle)
+#     def get_dataloader(self, generator, shuffle=True):
+#         return data.DataLoader(self,
+#             batch_size=self.config['train']['batch_size'],
+#             generator=generator,
+#             shuffle=shuffle)
 
-def verify_dataset(config):
-    '''Checks if the correct dataset.h5 file is downloaded, if it isn't then it
-    prompts the user if they would like to download it.
+# def verify_dataset(config):
+#     '''Checks if the correct dataset.h5 file is downloaded, if it isn't then it
+#     prompts the user if they would like to download it.
 
-    Args:
-        config (dict): A config object.
-    '''
-    path = f'{config["setup"]["data_dir"]}{config["setup"]["dataset"]}'
-    path += f'_{config["train"]["seq_len"]}_{config["train"]["overlap"]}'
-    path += f'_{config["train"]["lag"]}.h5'
+#     Args:
+#         config (dict): A config object.
+#     '''
+#     path = f'{config["setup"]["data_dir"]}{config["setup"]["dataset"]}'
+#     path += f'_{config["train"]["seq_len"]}_{config["train"]["overlap"]}'
+#     path += f'_{config["train"]["lag"]}.h5'
 
-    if os.path.isfile(path):
-        return None
-    else:
-        print(f'Dataset could not be found at: {path}')
-        response = input('Would you like to create it? (y/n): ')
-        while response != 'y' and response != 'n':
-            response = input("Please enter 'y' or 'n': ")
-        if response == 'n': exit()
+#     if os.path.isfile(path):
+#         return None
+#     else:
+#         print(f'Dataset could not be found at: {path}')
+#         response = input('Would you like to create it? (y/n): ')
+#         while response != 'y' and response != 'n':
+#             response = input("Please enter 'y' or 'n': ")
+#         if response == 'n': exit()
 
-        if config['setup']['dataset'] == 'mc_rtt':
-            download_mc_rtt(config['setup']['data_dir'])
+#         if config['setup']['dataset'] == 'mc_rtt':
+#             download_mc_rtt(config['setup']['data_dir'])
 
-        create_h5_data(
-            config["setup"]["data_dir"], 
-            config["setup"]["dataset"],
-            config["train"]["seq_len"],
-            config["train"]["overlap"],
-            config["train"]["lag"]
-        )
+#         create_h5_data(
+#             config["setup"]["data_dir"], 
+#             config["setup"]["dataset"],
+#             config["train"]["seq_len"],
+#             config["train"]["overlap"],
+#             config["train"]["lag"]
+#         )
 
 def download_mc_rtt(data_dir):
     ''' Download datasets, combine train/test & prep data, delete old files.

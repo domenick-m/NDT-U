@@ -13,7 +13,7 @@ from torch.nn.init import constant_, xavier_normal_, xavier_uniform_
 from torch.nn.modules.linear import NonDynamicallyQuantizableLinear as NDQL
 from torch.nn import Transformer, TransformerEncoder, TransformerEncoderLayer
 #────#
-from utils import get_norm
+from utils_f import get_norm
 '''───────────────────────────── transformer.py ─────────────────────────────'''
 # This file contains the NDT-U model.
 
@@ -207,9 +207,10 @@ class Transformer(Module):
         self.name = name
 
         self.n_heldin = dataset.n_heldin
-        self.n_neurons = dataset.n_neurons if config['train']['heldout'] else dataset.n_heldin
+        self.n_neurons = dataset.n_channels
         self.seq_len = config['train']['seq_len']
         self.max_train_spks = dataset.max_train_spks
+        self.has_heldout = dataset.has_heldout
 
         self.scale = math.sqrt(self.n_neurons)
         self.n_layers = config['model']['n_layers']
@@ -354,7 +355,7 @@ class Transformer(Module):
         batch[indices_randomized] = random_spikes.float()[indices_randomized]
 
         # Add 0 masked heldout if needed
-        if config['train']['heldout']:
+        if self.has_heldout:
             if self.zeros is None or self.zeros != heldout_spikes.size():
                 self.zeros = torch.zeros_like(heldout_spikes)
             batch = torch.cat([batch, self.zeros], -1)

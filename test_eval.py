@@ -21,14 +21,14 @@ from nlb_tools.make_tensors import h5_to_dict
 # from nlb_tools.nwb_interface import NWBDataset
 from nlb_tools.evaluation import bits_per_spike
 from sklearn.model_selection import GridSearchCV
-from utils import get_config_from_file, set_seeds
+from utils_f import get_config_from_file, set_seeds
 from sklearn.model_selection import KFold
 
 from sklearn.linear_model import PoissonRegressor
 
-from plot_utils.plot_rates_vs_spks_indv import plot_rates_vs_spks_indv
+import utils.plot.plot_rates_vs_spks_indv
 # from plot_utils.plot_rates_vs_spks_all import plot_rates_vs_spks_all
-from plot_utils.plot_pca import plot_pca
+import utils.plot.plot_pca
 # from plot_utils.plot_true_vs_pred_mvmnt import plot_true_vs_pred_mvmnt
 from datasets import get_dataloaders
 import multiprocessing

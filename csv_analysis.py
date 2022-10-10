@@ -15,38 +15,38 @@
 
 import pandas
 import torch
-import scipy.signal as signal
-from sklearn.model_selection import GridSearchCV
-from sklearn.linear_model import Ridge
-from create_local_data import make_test_data
-from configs.default_config import get_config_from_file
-from setup import set_device, set_seeds
-import h5py
-from nlb_tools.make_tensors import h5_to_dict
+# import scipy.signal as signal
+# from sklearn.model_selection import GridSearchCV
+# from sklearn.linear_model import Ridge
+# from create_local_data import make_test_data
+# from configs.default_config import get_config_from_file
+# from setup import set_device, set_seeds
+# import h5py
+# from nlb_tools.make_tensors import h5_to_dict
 import sys
 import shutil
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-df = pandas.read_csv('/home/dmifsud/Projects/NDT-U/cobps_vs_decoding_new_val.csv')
+df = pandas.read_csv('/home/dmifsud/Projects/NDT-U/05.10.2022_16.41.csv')
 smth_std = 60
 lag = 40
 
 fig, ax = plt.subplots(1, 1, figsize=(9, 9), sharex=True, sharey=True)
 
-plt.xlabel("Velocity Decoding R²")
-plt.ylabel("Co-bps")
-plt.title("Velocity Decoding of Smoothed Rates vs Co-bps of runs from HP Sweep")
+plt.xlabel("Smoothing Std Dev (ms)")
+plt.ylabel("R²")
+plt.title("Smoothing vs Velocity Decoding R²")
 
-ax.scatter(df['Filered Trials Decoding'], df['Co-bps'], marker='^', c='tab:blue', label='Smooth')
+ax.scatter(df['std'], df['r2'], marker='^', c='tab:blue', label='Smooth')
 # ax.scatter(df['Original Decoding'], df['Co-bps'], marker='^', c='tab:blue', label='Original')
-ax.set_ylim([0.12, 0.16])
-ax.set_xlim([0.4, 0.7])
+# ax.set_ylim([0.12, 0.16])
+# ax.set_xlim([0.4, 0.7])
 # ax.scatter(df['Smooth Decoding'], df['Co-bps'], marker='^', c='tab:red', label='Smoothed')
 # plt.legend()
 plt.tight_layout()
-plt.savefig('old_lag_vel_decoding_vs_co_bps.png', facecolor='white', transparent=False)
+plt.savefig('smth_std_vs_r2.png', facecolor='white', transparent=False)
 
 # df = pandas.read_csv('/home/dmifsud/Projects/NDT-U/cobps_vs_rates.csv')
 # smth_std = 80
