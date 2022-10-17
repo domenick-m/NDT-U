@@ -145,4 +145,4 @@ def plot_pca(
     fig.update_layout(margin=dict(r=0, l=0, b=0, t=50))
 
     config = {'displayModeBar': False}
-    return fig.to_html(config=config, full_html=False, include_plotlyjs='cdn')
+    fig.write_html(f"test.html")

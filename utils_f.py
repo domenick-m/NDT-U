@@ -65,7 +65,7 @@ def start_tmux_sweep(ag_gpus):
             for gpu in ag_gpus:
                 if gpu == 0: 
                     window.select_pane(gpu).send_keys(f'./train.py --sweep -y --gpu {gpu}')
-                    time.sleep(1)
+                    time.sleep(3)
                 else: 
                     window.select_pane(gpu).send_keys(f'./train.py --add --gpu {gpu}')
         
@@ -100,9 +100,25 @@ def add_tmux_agents(ag_gpus):
     else: print('This command must be ran within a tmux session.')
 
 
+def nll(rates, spikes):
+    if torch.any(torch.isnan(spikes)):
+        mask = torch.isnan(spikes)
+        rates = rates[~mask]
+        spikes = spikes[~mask]
+    
+    assert not torch.any(torch.isnan(rates)), \
+        "neg_log_likelihood: NaN rate predictions found"
+
+    assert torch.all(rates >= 0), \
+        "neg_log_likelihood: Negative rate predictions found"
+    if (torch.any(rates == 0)):
+        rates[rates == 0] = 1e-9
+    return nn.functional.poisson_nll_loss(rates, spikes, log_input=False, full=True, reduction='sum')
+
+
 def bits_per_spike(rates, spikes):
-    nll_model = nn.functional.poisson_nll_loss(rates, spikes, log_input=False, full=True, reduction='sum')
-    nll_null = nn.functional.poisson_nll_loss(torch.nanmean(spikes, dim=(0,1), keepdim=True).tile((spikes.shape[0], spikes.shape[1], 1)), spikes, log_input=False, full=True, reduction='sum')
+    nll_model = nll(rates, spikes)
+    nll_null = nll(torch.nanmean(spikes, dim=(0,1), keepdim=True).tile((spikes.shape[0], spikes.shape[1], 1)), spikes)
     return float((nll_null - nll_model) / spikes.nansum() / 0.6931471805599453)
 
 def metric_comparison(config, comp_met_val=None, results_dict=None):
@@ -470,9 +486,14 @@ def get_optimizer(model, config):
     '''
     parameters = model.parameters()
     if config['train']['optimizer'] == 'AdamW':
-        return torch.optim.AdamW(parameters,
-            lr=config['train']['init_lr'], # Default is 0.001
-            weight_decay=config['train']['weight_decay']) # Default is 0.01
+        return torch.optim.AdamW(
+            filter(lambda p: p.requires_grad, parameters), 
+            lr=config['train']['init_lr'],
+            weight_decay=config['train']['weight_decay'])
+            
+            # parameters,
+            # lr=config['train']['init_lr'], # Default is 0.001
+            # weight_decay=config['train']['weight_decay']) # Default is 0.01
     # elif config['train']['optimizer'] == 'new optimizer':
     #     return torch.optim.AdamW(parameters,)
 

@@ -35,7 +35,7 @@ def get_training_data(config):
         if config.data.rem_xcorr: 
             dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
 
-        dataset.resample(0.01) # convert ms to sec
+        dataset.resample(config.data.bin_size / 1000) # convert ms to sec
         spikes = dataset.data.spikes.to_numpy()
         spikes = chop(spikes, config.data.seq_len, config.data.overlap)
         names = [session for i in range(spikes.shape[0])]

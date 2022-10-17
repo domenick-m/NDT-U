@@ -29,6 +29,11 @@ from nlb_tools.make_tensors import (
 from utils_f import set_seeds
 from data.t5_dataset import T5CursorDataset
 
+from sklearn.decomposition import PCA
+from sklearn.linear_model import Ridge
+
+
+
 
 import warnings; warnings.simplefilter('ignore')
 '''────────────────────────────── datasets.py ───────────────────────────────'''
@@ -65,12 +70,16 @@ def get_pretraining_data(config):
         if config.data.rem_xcorr: 
             dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
 
-        dataset.resample(0.01) # convert ms to sec
-        spikes = dataset.data.spikes.to_numpy()
-        spikes = chop(spikes, config.data.seq_len, config.data.overlap)
+        dataset.resample(config.data.bin_size / 1000) # convert ms to sec
+
+        block_spikes = []
+        for block_num, block in dataset.data.groupby(('blockNums', 'n')):
+            block_spikes.append(chop(block.spikes.to_numpy(), config.data.seq_len, config.data.overlap))
+        spikes = np.concatenate(block_spikes, 0)
+
         names = [session for i in range(spikes.shape[0])]
 
-        chopped_spikes.append(torch.from_numpy(spikes))
+        chopped_spikes.append(torch.from_numpy(spikes.astype(np.float32)))
         session_names.append(names)
 
     return torch.cat(chopped_spikes, 0), np.concatenate(session_names, 0)
@@ -89,20 +98,23 @@ def get_alignment_matricies(config):
 
     session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
 
-    session_csv.loc[session_csv['session_id'] == 3, 'A']
+    avg_conds = {}
 
     for session in config.data.pretrain_sessions:
+        dataset = copy.deepcopy(datasets[session])
+        dataset.resample(config.data.bin_size / 1000)
+        dataset.smooth_spk(config.data.smth_std, name='smth')
+
         failed_trials = ~dataset.trial_info['is_successful'] 
-        center_trials = dataset.trial_info['is_center_target'] if not config.data.center_trials else False
+        center_trials = dataset.trial_info['is_center_target']
+        ol_block = session_csv.loc[session_csv['session_id'] == session, 'ol_blocks'].item() # cl = [int(i) for i in session_csv.loc[session_csv['session_id'] == session, 'cl_blocks'].item().split(' ')]
+        cl_blocks =  ~dataset.trial_info['block_num'].isin([ol_block]).values.squeeze()
         
         trial_data = dataset.make_trial_data(
             align_field='start_time',
-            align_range=(
-                -config.data.seq_len * config.data.bin_size + config.data.bin_size, # start align
-                config.data.trial_len + lag if control == 'ol_blocks' else None # end_align
-            ),
+            align_range=(0, config.data.trial_len),
             allow_overlap=True,
-            ignored_trials=failed_trials | center_trials
+            ignored_trials=failed_trials | center_trials | cl_blocks
         )
 
         trial_data.sort_index(axis=1, inplace=True)
@@ -113,13 +125,49 @@ def get_alignment_matricies(config):
             indices = trial_data.index[trial_data['X&Y'] == xy]
             trial_data.loc[indices, 'condition'] = id
 
-        trials[session][control] = {}
-        for block in blocks:
-            trials[session][control][block] = {}
-            block_mask = trial_data['blockNums'].isin([block]).values.squeeze()
-            for tr_id, trial in trial_data[block_mask].groupby('trial_id'):
-                trials[session][control][block][tr_id] = trial
-    # return torch.cat(chopped_spikes, 0), torch.cat(session_names, 0)
+        avg_conds[session] = []
+        for cond_id, trials in trial_data.groupby('condition'):
+            trial_list = []
+            for trial_id, trial in trials.groupby('trial_id'):
+                trial_list.append(trial.spikes.to_numpy())
+            avg_conds[session].append(np.mean(trial_list, 0))
+
+    session_list = list(avg_conds.keys())
+    avg_cond_arr = np.array(list(avg_conds.values())) # (days, conds, bins, chans)
+    avg_cond_arr = avg_cond_arr.transpose((3, 0, 1, 2)) # -> (chans, days, conds, bins)
+    nchans, ndays, nconds, nbins = avg_cond_arr.shape
+    avg_cond_arr = avg_cond_arr.reshape((nchans * ndays, nconds * nbins))
+
+    avg_cond_means = avg_cond_arr.mean(axis=1)
+    avg_cond_centered = (avg_cond_arr.T - avg_cond_means.T).T
+
+    pca = PCA(n_components=config.model.factor_dim)
+    pca.fit(avg_cond_centered.T)
+
+    dim_reduced_data = np.dot(avg_cond_centered.T, pca.components_.T).T
+    avg_cond_arr = avg_cond_arr.reshape((nchans, ndays, nconds, nbins))
+
+    dim_reduced_data_means = dim_reduced_data.mean(axis=1)
+    dim_reduced_data_this = (dim_reduced_data.T - dim_reduced_data_means.T).T
+
+    alignment_matrices = []
+    alignment_biases = []
+    
+    for day in range(ndays):
+        this_dataset_data = avg_cond_arr.reshape((nchans, ndays, nconds * nbins))[:, day, :].squeeze()
+
+        this_dataset_means = avg_cond_means.reshape(nchans, ndays)[:, day].squeeze()
+        this_dataset_centered = (this_dataset_data.T - this_dataset_means.T).T
+
+        reg = Ridge(alpha=1.0, fit_intercept=False)
+        reg.fit(this_dataset_centered.T, dim_reduced_data_this.T)
+
+        alignment_matrices.append(torch.from_numpy(np.copy(reg.coef_.astype(np.float32))))  # nchans x nPCs
+        bias = -1 * np.dot(this_dataset_means, reg.coef_.T)
+        alignment_biases.append(torch.from_numpy(bias.astype(np.float32)))
+
+    return alignment_matrices, alignment_biases, session_list
+
 
     
 
@@ -235,9 +283,13 @@ def get_dataloaders(config, mode):
         )
 
         if train_data.has_heldout:
-            val_data = (train_data.heldin_spikes[val_indicies], train_data.heldout_spikes[val_indicies]) 
+            val_data = (
+                train_data.heldin_spikes[val_indicies], 
+                train_data.heldout_spikes[val_indicies],
+                train_data.names[val_indicies]
+            ) 
         else:
-            val_data = train_data.spikes[val_indicies]
+            val_data = train_data.spikes[val_indicies], train_data.names[val_indicies]
 
         return train_dataloader, val_data
     

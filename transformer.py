@@ -3,6 +3,7 @@
 #───────#
 import math
 import copy
+from numpy import indices
 #────#
 import torch
 import torch.nn as nn
@@ -14,6 +15,7 @@ from torch.nn.modules.linear import NonDynamicallyQuantizableLinear as NDQL
 from torch.nn import Transformer, TransformerEncoder, TransformerEncoderLayer
 #────#
 from utils_f import get_norm
+from datasets import get_alignment_matricies
 '''───────────────────────────── transformer.py ─────────────────────────────'''
 # This file contains the NDT-U model.
 
@@ -154,8 +156,7 @@ class Encoder(Module):
             seq_len (int): Length of trial + forward pass
         '''
         super().__init__()
-        n_layers = config['model']['n_layers']
-        self.layers = ModuleList([copy.deepcopy(encoder_layer) for i in range(n_layers)])
+        self.layers = ModuleList([copy.deepcopy(encoder_layer) for i in range(config.model.n_layers)])
         self.norm = get_norm(config, n_neurons)
 
     def forward(self, src, attn_mask=None):
@@ -194,7 +195,7 @@ class Transformer(Module):
         classifier (function): nn.PoissonNLLLoss().
     '''
 
-    def __init__(self, config, dataset, name):
+    def __init__(self, config, dataset, name, device):
         """init Transformer
 
         Args:
@@ -206,25 +207,47 @@ class Transformer(Module):
         self.config = config
         self.name = name
 
-        self.n_heldin = dataset.n_heldin
-        self.n_neurons = dataset.n_channels
+        self.has_heldout = dataset.has_heldout
+        if self.has_heldout:
+            self.n_heldin = dataset.n_heldin
+            self.n_heldout = dataset.n_heldout
+
+        self.n_channels = dataset.n_channels # heldin + heldout
+        self.factor_dim = config.model.factor_dim
         self.seq_len = config['train']['seq_len']
         self.max_train_spks = dataset.max_train_spks
-        self.has_heldout = dataset.has_heldout
 
-        self.scale = math.sqrt(self.n_neurons)
+        self.scale = math.sqrt(self.factor_dim)
         self.n_layers = config['model']['n_layers']
         self.rate_dropout = nn.Dropout(config['model']['dropout_rates'])
         self.embedding_dropout = nn.Dropout(p=config['model']['dropout_embedding'])
 
-        pe = torch.zeros(self.seq_len, self.n_neurons)
+        pe = torch.zeros(self.seq_len, self.factor_dim)
         position = torch.arange(0, self.seq_len, dtype=torch.float).unsqueeze(1)
         self.register_buffer('pe', position.long())
-        self.pos_embedding = nn.Embedding(self.seq_len, self.n_neurons)
+        self.pos_embedding = nn.Embedding(self.seq_len, self.factor_dim)
 
-        encoder_layer = EncoderLayer(config, self.n_neurons, self.seq_len)
-        self.encoder = Encoder(config, self.n_neurons, encoder_layer, self.seq_len)
-        self.decoder = nn.Linear(self.n_neurons, self.n_neurons)
+        encoder_layer = EncoderLayer(config, self.factor_dim, self.seq_len)
+        self.encoder = Encoder(config, self.factor_dim, encoder_layer, self.seq_len)
+        # self.decoder = nn.Linear(self.factor_dim, self.factor_dim)
+
+        self.readin, self.readout = nn.ModuleDict({}), nn.ModuleDict({})
+        matrices, biases, sessions = get_alignment_matricies(config)
+        for idx, session in enumerate(sessions):
+            session = session.replace('.', '_')
+            self.readin[session] = nn.Linear(self.n_channels, self.factor_dim)
+            if not config.model.rand_readin_init:
+                self.readin[session].weight = torch.nn.Parameter(matrices[idx][:self.factor_dim, :])
+                self.readin[session].bias = torch.nn.Parameter(biases[idx][:self.factor_dim])
+                if config.model.freeze_readin:
+                    self.readin[session].weight.requires_grad = False
+                    self.readin[session].bias.requires_grad = False
+            self.readin[session] = self.readin[session].to(device)
+
+            self.readout[session] = nn.Linear(self.factor_dim, self.n_channels)
+            # self.readout[session].weight = torch.nn.Parameter(matrices[idx].T[:, :self.factor_dim])
+            # self.readout[session].bias = torch.nn.Parameter(biases[idx])
+            self.readout[session] = self.readout[session].to(device)
 
         self.zeros = None
         self.attn_mask = None
@@ -233,10 +256,11 @@ class Transformer(Module):
         self.random_prob_mask = None
 
         self.classifier = nn.PoissonNLLLoss(reduction='none')
+        
 
-        self.decoder.bias.data.zero_()
-        self.decoder.weight.data.uniform_(
-            -config['model']['initrange'], config['model']['initrange'])
+        # self.decoder.bias.data.zero_()
+        # self.decoder.weight.data.uniform_(
+        #     -config['model']['initrange'], config['model']['initrange'])
 
         if config['model']['normal_init']:
             std = (2 / (5 * (self.n_neurons))) ** 0.5
@@ -244,7 +268,7 @@ class Transformer(Module):
                 if parameter.dim() > 1:
                     nn.init.normal_(parameter, mean=0.0, std=std)
 
-    def forward(self, spikes, labels=None):
+    def forward(self, spikes, sessions, labels=None):
         ''' Forward pass.
 
         Args:
@@ -257,21 +281,29 @@ class Transformer(Module):
         if not self.training: 
             spikes = torch.clamp(spikes, max=self.max_train_spks)
 
-        spikes = spikes.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
-        spikes += self.pos_embedding(self.pe)
-        spikes = self.embedding_dropout(spikes)
+        pred_rates = torch.empty_like(spikes)
 
-        attn_mask = self.get_attn_mask(spikes) # [T, T]
-        output = self.encoder(spikes, attn_mask)
-        output = self.rate_dropout(output)
+        for session in set(sessions):
+            session = session.replace('.', '_')
+            indices = [index for index, elem in enumerate(sessions) if elem.replace('.', '_') == session]
+            factors = self.readin[session](spikes[indices, :, :])
 
-        pred_rates = self.decoder(output).permute(1, 0, 2)  # [T x B x N] ->  [B x T x N]
-        if labels == None: return pred_rates
+            factors = factors.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
+            factors += self.pos_embedding(self.pe)
+            factors = self.embedding_dropout(factors)
+
+            attn_mask = self.get_attn_mask(factors) # [T, T]
+            output = self.encoder(factors, attn_mask)
+            output = self.rate_dropout(output).permute(1, 0, 2)  # [T x B x N] ->  [B x T x N]
+
+            test = self.readout[session](output)
+            pred_rates[indices, :, :] = test
+
+        # pred_rates = self.decoder(output).permute(1, 0, 2)  # [T x B x N] ->  [B x T x N]
+        if labels == None: 
+            return pred_rates, output
 
         loss = self.classifier(pred_rates, labels)
-
-        # lt_loss = loss[:, -1, :].mean()
-        # masked_loss = loss[labels != -100].mean()
 
         return loss, pred_rates
 

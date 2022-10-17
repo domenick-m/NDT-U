@@ -52,7 +52,8 @@ from utils_f import (get_config,
 # be found by running 'python train.py -h'.
 
 # from datasets import verify_dataset
-from datasets import get_dataloaders
+from datasets import get_dataloaders, get_alignment_matricies
+from yacs.config import CfgNode as CN
 
 # Will beome 'train.py'
 import signal
@@ -125,7 +126,8 @@ def run_training(config, device, name):
             get_config_dict(get_config_from_file(glob('./wandb/*'+wandb.run.sweep_id+'/')[0]+'config.yaml')), 
             allow_val_change=True
         )
-        config = get_wandb_config()
+        config = CN(get_wandb_config())
+        
 
     name = get_run_name(config, name)
 
@@ -139,14 +141,14 @@ def run_training(config, device, name):
         for idx, train_sub_dl, val_sub_dl in val_dataloader:
             run_name = f'{name}_f{idx}'
             dataset_sub = train_sub_dl.dataset.dataset
-            model = Transformer(config, dataset_sub, run_name).to(device)
+            model = Transformer(config, dataset_sub, run_name, device).to(device)
             train(model, train_sub_dl, val_sub_dl, device, f'_f{idx}')
         val_dataloader = None
         dataset = train_dataloader.dataset 
     else:
         dataset = train_dataloader.dataset.dataset 
 
-    model = Transformer(config, dataset, name).to(device)
+    model = Transformer(config, dataset, name, device).to(device)
     train(model, train_dataloader, val_dataloader, device)
     # test_eval(config, model)
 
@@ -266,8 +268,10 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
                 heldout_spikes, # B, T, N
             )
 
-            with torch.cuda.amp.autocast():
-                loss, _ = model(masked_spikes, labels)
+            # with torch.cuda.amp.autocast():
+            loss, _ = model(masked_spikes, names, labels)
+            # with torch.cuda.amp.autocast():
+            #     loss, _ = model(masked_spikes, names, labels)
 
             lt_nll = loss[:, -1, :].mean()
             msk_nll = loss[labels != -100].mean()
@@ -281,14 +285,19 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
                 wandb.log({k+fold if k != 'epochs' else 'epochs': v for k, v in results_dict.items()})
 
             # Backprop loss
-            scaler.scale(lt_nll if config['train']['lt_loss_only'] else msk_nll).backward()
+            if config['train']['lt_loss_only']:
+                lt_nll.backward()  
+            else: 
+                msk_nll.backward()  
+            # scaler.scale(lt_nll if config['train']['lt_loss_only'] else msk_nll).backward()
 
             # Clip gradient
             nn.utils.clip_grad_norm_(model.parameters(), config['train']['max_grad_norm'])
 
             # Optimizer step
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.step()
+            # scaler.step(optimizer)
+            # scaler.update()
             optimizer.zero_grad(set_to_none=True)
 
         if scheduler != None:
@@ -300,7 +309,7 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
             model.eval() # turns off dropout
 
             with torch.no_grad():
-                spikes, ho_spikes = val_dataloader 
+                spikes, ho_spikes, names = val_dataloader 
                 labels = spikes.clone()
                 hi_spikes = spikes.clone()
                 
@@ -308,8 +317,8 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
                     labels = torch.cat([labels, ho_spikes], -1)
                     spikes = torch.cat([spikes, torch.zeros_like(ho_spikes, device=device)], -1)
 
-                with torch.cuda.amp.autocast():
-                    loss, rates = model(spikes, labels)
+                # with torch.cuda.amp.autocast():
+                loss, rates = model(spikes, names, labels)
 
                 if model.has_heldout:
                     n_heldout = ho_spikes.shape[-1]
