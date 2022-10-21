@@ -31,7 +31,7 @@ config.setup.runs_dir = 'runs/' # Where the train and test output data should be
 '''
 config.train = CN()
 config.train.batch_size = 64 # Number of samples to compute loss with
-config.train.epochs = 20 # Number of full passes through dataset
+config.train.epochs = 50000 # Number of full passes through dataset
 
 config.train.val_interval = 10 # Epochs between running on the validation set
 config.train.val_type = 'original' # ['original', 'random', 'none'] Original is the nlb given validation set, random is a random subset of the combined train and validation set, none is no validation set
@@ -40,17 +40,17 @@ config.train.val_ratio = 0.05 # Percentage of the combined training and validati
 config.train.sweep_enabled = False # Whether or not wandb hyperparameter sweep is enabled, if False running train.py will train a single model
 config.train.sweep_type = 'grid' # ['grid', 'random'] Which wandb sweep type to use when sweep is enabled, grid is every combination of the sweep values, and random is random combinations of the sweep values
 config.train.sweep_epochs = 9999 # Number of models that should be trained if sweep_type is random
-config.train.early_stopping = True # Whether or not the model stops training due to low co-bps
+config.train.early_stopping = False # Whether or not the model stops training due to low co-bps
 config.train.es_min_bps= 0.31 # The point at which a model will be early stopped if it's co-bps score falls below this
 config.train.es_chk_pnt= 0.5 # When should the model start checking if it should early stop, 0.5 = halfway through the total epochs it will starting checking if co-bps falls below es_min_bps
 
-config.train.init_lr = 0.01 # The initial learning rate to be used by the optimizer
+config.train.init_lr = 0.0005 # The initial learning rate to be used by the optimizer
 config.train.optimizer = 'AdamW' # ['AdamW',] The optimizer to use, other may be added in setup.py
 config.train.scheduler = 'Cosine' # ['None', 'Cosine',] The scheduler to use on the learning rate, other may be added in setup.py
 config.train.warmup_steps = 1500 # Warmup steps used by Cosine scheduler, icreases lr to 1 in this many steps before it follows cosine decay
 
 config.train.max_grad_norm = 200.0 # The maximum value a gradient can have before it is clipped, avoids exploding gradient
-config.train.weight_decay = 1.000e-7 # The weight decay value used by AdamW, kind of like L2 Reg but better
+config.train.weight_decay = 1.000e-2 # The weight decay value used by AdamW, kind of like L2 Reg but better
 
 config.train.mask_max_span = 6 # The max number of timesteps that can be masked in a row
 config.train.ramp_start = 1000 # Epoch when the number of timesteps being maksed in a row starts to increase
@@ -61,28 +61,33 @@ config.train.ramp_end = 10000 # Epoch when the number of timesteps being maksed 
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.model = CN()
-config.model.n_heads = 4 # The number of heads used in UndividedMultiheadAttention
-config.model.n_layers = 6 # The number of EncoderLayers the Encoder should have
-config.model.hidden_size = 256 # The size of the linear layers in each EncoderLayer
+config.model.n_heads = 6 # The number of heads used in UndividedMultiheadAttention
+config.model.n_layers = 12 # The number of EncoderLayers the Encoder should have
+config.model.hidden_size = 4096 # The size of the linear layers in each EncoderLayer
+config.model.undivided_attn = True # The size of the linear layers in each EncoderLayer
+
+config.model.e1 = 8 # The number of EncoderLayers the Encoder should have
+config.model.e2 = 16 # The number of EncoderLayers the Encoder should have
+config.model.factor_dim = 64
 
 config.model.dropout = 0.4 # Overall dropout, used in EncoderLayer
-config.model.dropout_rates = 0.5 # Dropout of model output (rates)
-config.model.dropout_embedding = 0.7 # Dropout applied after pos_embedding is added
-config.model.dropout_attention = 0.5 # Dropout applied to the attention matrix in UndividedMultiheadAttention
+config.model.dropout_rates = 0.4 # Dropout of model output (rates)
+config.model.dropout_embedding = 0.4 # Dropout applied after pos_embedding is added
+config.model.dropout_attention = 0.4 # Dropout applied to the attention matrix in UndividedMultiheadAttention
 
-config.model.loss_ratio = 0.25 # Percentage of tokens that loss is computed with
-config.model.mask_ratio = 0.75 # Percentage of tokens being used to compute the loss are zero masked
+config.model.loss_ratio = 0.5 # Percentage of tokens that loss is computed with
+config.model.mask_ratio = 0.95 # Percentage of tokens being used to compute the loss are zero masked
 config.model.random_ratio = 1.0 # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
 
-config.model.norm = "scale" # ['layer', 'scale'] The normalization to be used in the EncoderLayers
+config.model.norm = "layer" # ['layer', 'scale'] The normalization to be used in the EncoderLayers
 config.model.activation = "relu" # ['relu', 'gelu']
 config.model.max_spike_count = 20 # Max number of spikes allowed, any count above is clipped to this
 
 config.model.xavier = False # Whether or not xaiver init should be used, if False use the init from T-fixup
 config.model.initrange = 0.01 # The range that should be used on the normal init of the decoder
 
-config.model.context_forward = 35 # How many timesteps in the future can a timestep attend to
-config.model.context_backward = 35 # How many timesteps in the past can a timestep attend to
+config.model.context_forward = 25 # How many timesteps in the future can a timestep attend to
+config.model.context_backward = 45 # How many timesteps in the past can a timestep attend to
 '''
    ╔════════════════════════════════════════════════════════════════════════╗
    ║                                 WANDB                                  ║
@@ -93,7 +98,7 @@ config.wandb.log = True # Whether or not data is uploaded to wandb
 config.wandb.log_freq = 250 # Epochs between each gradient log of the model by wandb
 config.wandb.log_local = False # If wandb.log is False should logs (what would be uploaded to wandb) be saved locally to train/runs/run_name/report_log.txt
 
-config.wandb.project = 'benchmarks' # The wandb project the run should be stored in
+config.wandb.project = 'embedding test' # The wandb project the run should be stored in
 config.wandb.sweep_name = 'my-sweep' # The name of the sweep if train.sweep_enabled is True
 
 config.wandb.silent = 'true' # ['true', 'false'] If 'true' wandb does not print anything

@@ -332,6 +332,7 @@ def unpack(path, dataset, progress_bar):
     '(dataset)_test.nwb', to create '(dataset).h5' for each dataset. Store the
     '.h5' file in 'path' and delete the train and test '.nwb' files for each dataset.
     '''
+    print('\n\n\n\n\n',path)
     dataset_obj = NWBDataset(path) # NWB Object
     progress_bar.update(10)
     dataset_obj.resample(5) # bin width of 5 ms

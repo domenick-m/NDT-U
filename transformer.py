@@ -18,69 +18,59 @@ from setup import get_norm
 # This file contains the NDT-U model.
 
 class UndividedMultiheadAttention(Module):
-    '''An altered version of pytorch's MultiheadAttention that has the full
-    embedding (n_neurons) size availiable in each head.
-
-     Attributes:
-        n_heads (int): Number of heads.
-        dropout (float): Attention Dropout percentage.
-        neurons_x_heads (int): n_neurons * n_heads
-        in_proj_weight (Parameter): Size=[3 * neurons_x_heads, n_neurons]
-        in_proj_bias (Parameter): Size=[3 * neurons_x_heads]
-        out_proj (NDQL): Size=[n_neurons, neurons_x_heads]
-    '''
-
     def __init__(self, config, n_neurons):
-        '''init UndividedMultiheadAttention
-
-        Args:
-            config (dict): The config.
-            n_neurons (int): Number of neurons.
-        '''
         super(UndividedMultiheadAttention, self).__init__()
+        self.config = config
 
-        self.n_heads = config['model']['n_heads']
-        self.dropout = config['model']['dropout_attention']
-        self.neurons_x_heads = n_neurons * self.n_heads
+        # If using undivided attention, each head needs 'input_dim' dimensions
+        self.packed_dim_size = n_neurons * config['model']['n_heads'] if (
+            config['model']['undivided_attn']
+        ) else n_neurons
 
-        self.in_proj_weight = Parameter(torch.empty((3 * self.neurons_x_heads, n_neurons)))
-        self.in_proj_bias = Parameter(torch.empty(3 * self.neurons_x_heads))
-        self.out_proj = NDQL(self.neurons_x_heads, n_neurons)
+        # MHA uses a packed tensor, Queries Keys and Values all share the same weight matrix
+        self.in_proj_weight = Parameter(torch.empty((3 * self.packed_dim_size, n_neurons)))
+        self.in_proj_bias = Parameter(torch.empty(3 * self.packed_dim_size))
+        self.out_proj = NDQL(self.packed_dim_size, n_neurons)
 
+        # Init QKV weights and all biases
         xavier_uniform_(self.in_proj_weight)
         constant_(self.in_proj_bias, 0.)
         constant_(self.out_proj.bias, 0.)
 
     def forward(self, src, attn_mask=None):
-        '''Forward pass.
+        # Use the same weight matrix then seperate 
+        self.q, self.k, self.v = torch._C._nn.linear(src, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
 
-        Args:
-            src (Tensor): A batch of data. Size=[T, B, N]
-            attn_mask (Tensor, Optional): How far each timestep can attend to.
-                                          Size=[T, T]
-        Returns:
-            result (Tensor): The output of the UMHA. Size=[T, B, N]
-        '''
-        linear = torch._C._nn.linear
-        seq_len, bsz, n_neurons = src.shape
-        q, k, v = linear(src, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
+        # If using undivided attention the view shape is [T x (B * n_heads) x N]
+        self.view_shape = (src.shape[0], src.shape[1] * self.config['model']['n_heads'], src.shape[2]) if (
+            self.config['model']['undivided_attn']
+        ) else (
+            # If using standard MHA the view shape is [T x (B * n_heads) x (N // n_heads)]
+            (src.shape[0], src.shape[1] * self.config['model']['n_heads'], src.shape[2] // self.config['model']['n_heads'])
+        )
+        self.q = self.q.contiguous().view(*self.view_shape).transpose(0, 1) / math.sqrt(self.view_shape[2])
+        self.k = self.k.contiguous().view(*self.view_shape).transpose(0, 1)
+        self.v = self.v.contiguous().view(*self.view_shape).transpose(0, 1)
 
-        q = q.contiguous().view(seq_len, bsz * self.n_heads, n_neurons).transpose(0, 1)
-        k = k.contiguous().view(seq_len, bsz * self.n_heads, n_neurons).transpose(0, 1)
-        v = v.contiguous().view(seq_len, bsz * self.n_heads, n_neurons).transpose(0, 1)
+        # Create the attention matrix [T x T]
+        self.attn = torch.bmm(self.q, self.k.transpose(-2, -1))
 
-        q = q / math.sqrt(n_neurons)
-        attn = torch.bmm(q, k.transpose(-2, -1))
+        # Restrict how far in past / future each timestep can attend to
         if attn_mask is not None:
-            attn += attn_mask
-        attn = F.softmax(attn, dim=-1)
-        if self.training:
-            attn = F.dropout(attn, p=self.dropout)
-        attn_output = torch.bmm(attn, v).transpose(0, 1)
-        attn_output = attn_output.contiguous().view(seq_len * bsz, self.neurons_x_heads)
+            self.attn += attn_mask
 
-        result = linear(attn_output, self.out_proj.weight, self.out_proj.bias)
-        return result.view(seq_len, bsz, n_neurons)
+        # Apply softmax and dropout to attention matrix    
+        self.attn = F.softmax(self.attn, dim=-1)
+        if self.training:
+            self.attn = F.dropout(self.attn, p=self.config['model']['dropout_attention'] )
+        
+        # Multiply attention matrix (QK) and values (V)
+        self.attn_output = torch.bmm(self.attn, self.v).transpose(0, 1)
+        self.attn_output = self.attn_output.contiguous().view(src.shape[0] * src.shape[1], self.packed_dim_size)
+
+        # Project to proper size ([T x B x N]) and return
+        return torch._C._nn.linear(self.attn_output, self.out_proj.weight, self.out_proj.bias).view(*src.shape)
+
 
 class EncoderLayer(TransformerEncoderLayer):
     '''A simplified version of pytorch's TransformerEncoderLayer.
@@ -220,20 +210,31 @@ class Transformer(Module):
         self.n_neurons = dataset.n_neurons
         self.tr_length = dataset.tr_length
         self.full_length = dataset.full_length
+        self.factor_dim = config['model']['factor_dim']
 
-        self.scale = math.sqrt(self.n_neurons)
+        self.scale = math.sqrt(self.factor_dim * config['model']['e2'])
         self.n_layers = config['model']['n_layers']
         self.rate_dropout = nn.Dropout(config['model']['dropout_rates'])
         self.embedding_dropout = nn.Dropout(p=config['model']['dropout_embedding'])
 
-        pe = torch.zeros(self.full_length, self.n_neurons)
+        pe = torch.zeros(self.full_length, self.factor_dim * config['model']['e2'])
         position = torch.arange(0, self.full_length, dtype=torch.float).unsqueeze(1)
         self.register_buffer('pe', position.long())
-        self.pos_embedding = nn.Embedding(self.full_length, self.n_neurons)
+        self.pos_embedding = nn.Embedding(self.full_length, self.factor_dim * config['model']['e2'])
 
-        encoder_layer = EncoderLayer(config, self.n_neurons, self.full_length)
-        self.encoder = Encoder(config, self.n_neurons, encoder_layer, self.full_length)
-        self.decoder = nn.Linear(self.n_neurons, self.n_neurons)
+        encoder_layer = EncoderLayer(config, self.factor_dim * config['model']['e2'], self.full_length)
+        self.encoder = Encoder(config, self.factor_dim * config['model']['e2'], encoder_layer, self.full_length)
+        self.readin = nn.Linear(self.n_neurons * config['model']['e1'], self.factor_dim * config['model']['e2'])
+        self.readout1 = nn.Linear(self.factor_dim * config['model']['e2'], self.factor_dim * config['model']['e2'] * 2)
+        self.readout2 = nn.Linear(self.factor_dim * config['model']['e2'] * 2, self.factor_dim * config['model']['e2'])
+        self.readout3 = nn.Linear(self.factor_dim * config['model']['e2'], self.n_neurons)
+        self.readout1_dropout = nn.Dropout(p=config['model']['dropout'])
+        self.readout2_dropout = nn.Dropout(p=config['model']['dropout'])
+        self.act = nn.GELU()
+
+        self.ch_embed = nn.Linear(1, config['model']['e1'])
+        self.time_w = nn.ModuleList([nn.Linear(self.full_length, self.full_length) for i in range(config['model']['e1'])])
+        #
 
         self.attn_mask = None
         self.loss_prob_mask = None
@@ -242,14 +243,13 @@ class Transformer(Module):
 
         self.classifier = nn.PoissonNLLLoss(reduction='none')
 
-        self.decoder.bias.data.zero_()
-        self.decoder.weight.data.uniform_(
-            -config['model']['initrange'], config['model']['initrange'])
+        # self.decoder.bias.data.zero_()
+        # self.decoder.weight.data.uniform_(
+        #     -config['model']['initrange'], config['model']['initrange'])
 
-        std = (2 / (5 * (self.n_neurons))) ** 0.5
-        for parameter in self.parameters():
-            if parameter.dim() > 1:
-                nn.init.normal_(parameter, mean=0.0, std=std)
+        # for parameter in self.parameters():
+        #     if parameter.dim() > 1:
+        #         nn.init.normal_(parameter, mean=0.0, std=0.00001)
 
     def forward(self, spikes, labels=None):
         ''' Forward pass.
@@ -261,6 +261,19 @@ class Transformer(Module):
             final_loss (Tensor): The loss. Size=[1]
             pred_rates (Tensor): The predicted rates. Size=[B, T, N]
         '''
+        ch_emb = self.ch_embed(spikes[:, :, 0].unsqueeze(-1))
+        spikes_0 = self.time_w[0](ch_emb[:, :, 0].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)
+        for e_i in range(1, self.config['model']['e1']):
+            spikes_0 = torch.cat((spikes_0, self.time_w[e_i](ch_emb[:, :, e_i].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)), -1)
+        for i in range(1, self.n_neurons):
+            ch_emb = self.ch_embed(spikes[:, :, i].unsqueeze(-1))
+            t_emb = self.time_w[0](ch_emb[:, :, 0].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)
+            for e_i in range(1, self.config['model']['e1']):
+                t_emb = torch.cat((t_emb, self.time_w[e_i](ch_emb[:, :, e_i].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)), -1)
+            spikes_0 = torch.cat((spikes_0, t_emb), -1)
+        
+        spikes = self.readin(spikes_0)
+
         spikes = spikes.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
         spikes += self.pos_embedding(self.pe)
         spikes = self.embedding_dropout(spikes)
@@ -268,7 +281,11 @@ class Transformer(Module):
         output = self.encoder(spikes, attn_mask)
         # if self.training: output = self.rate_dropout(output) ? Should this be used
         output = self.rate_dropout(output)
-        pred_rates = self.decoder(output).permute(1, 0, 2)  # [T x B x N] ->  [B x T x N]
+
+        pred_rates = self.readout1_dropout(self.readout1(output))
+        pred_rates = self.readout2_dropout(self.readout2(self.act(pred_rates)))
+        pred_rates = self.readout3(self.act(pred_rates)).permute(1, 0, 2)  # [T x B x N] ->  [B x T x N]
+
         if labels == None: return pred_rates
         loss = self.classifier(pred_rates, labels)
         masked_loss = loss[labels != -100]
