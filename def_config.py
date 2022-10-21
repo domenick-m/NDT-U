@@ -88,9 +88,9 @@ config.train.overlap = 25 #
 config.train.lag = 40       # ms to lag kinematic data by 
 config.train.smth_std = 60  # ms std to smooth rates by when decoding
 
-config.train.batch_size = 2048   # Number of samples to compute loss with
+config.train.batch_size = 4096   # Number of samples to compute loss with
 config.train.e_batch_size = 128  # Number of samples to compute loss with
-config.train.epochs = 20000        # Number of full passes through dataset
+config.train.epochs = 50000        # Number of full passes through dataset
 
 config.train.val_interval = 5 # Epochs between running on the validation set
 config.train.val_type = 'random' # ['random', 'last', 'cross_val']
@@ -109,7 +109,7 @@ config.train.max_grad_norm = 200.0   # The max gradient before value is clipped
 config.train.optimizer = 'AdamW'   # ['AdamW',] The optimizer to use
 config.train.weight_decay = 5.0e-05   # The weight decay value used by AdamW, kind of like L2 Reg but better
 config.train.scheduler = 'Cosine'   # ['None', 'Cosine',] The learning rate scheduler
-config.train.warmup_steps = 2000   # !!!!!!!!! TEST THIS FOR EPOCHS VS STEPS !!!!!    Warmup epcohs used by Cosine scheduler, icreases lr to 1 in this many epochs before it follows cosine decay
+config.train.warmup_steps = 200   # !!!!!!!!! TEST THIS FOR EPOCHS VS STEPS !!!!!    Warmup epcohs used by Cosine scheduler, icreases lr to 1 in this many epochs before it follows cosine decay
 
 config.train.mask_max_span = 3 # The max number of timesteps that can be masked in a row randomly 
 config.train.ramp_start = 8000 # Epoch when the expand prob starts to increase
@@ -121,13 +121,15 @@ config.train.ramp_end = 12000 # Epoch when the expand prob remains at mask_max_s
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.model = CN()
-config.model.n_heads = 3 # The number of heads used in UndividedMultiheadAttention
-config.model.undivided_attn = True 
-config.model.n_layers = 6 # The number of EncoderLayers the Encoder should have
+config.model.n_heads = 32 # The number of heads used in UndividedMultiheadAttention
+config.model.undivided_attn = False 
+config.model.n_layers = 4 # The number of EncoderLayers the Encoder should have
+config.model.e1 = 8 # The number of EncoderLayers the Encoder should have
+config.model.e2 = 8 # The number of EncoderLayers the Encoder should have
 config.model.factor_dim = 32 # Dimensions that NDT will use after readin / before readout
-config.model.hidden_size = 128 # The size of the linear layers in each EncoderLayer
+config.model.hidden_size = 64 # The size of the linear layers in each EncoderLayer
 config.model.freeze_readin = False # The size of the linear layers in each EncoderLayer
-config.model.rand_readin_init = False # The size of the linear layers in each EncoderLayer
+config.model.rand_readin_init = True # The size of the linear layers in each EncoderLayer
 
 config.model.norm = 'layer' # ['layer', 'scale'] The normalization to be used in the EncoderLayers
 config.model.gnorm_groups = 10 # ['layer', 'scale'] The normalization to be used in the EncoderLayers

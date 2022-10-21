@@ -56,10 +56,12 @@ for session in config.data.pretrain_sessions:
     trials_dict[session] = {}
     for cond_id, trials in trial_data.groupby('condition'):
         trial_list = []
+        smth_trial_list = []
         for trial_id, trial in trials.groupby('trial_id'):
-            trial_list.append(trial.spikes_smth.to_numpy())
+            trial_list.append(trial.spikes.to_numpy())
+            smth_trial_list.append(trial.spikes_smth.to_numpy())
         trials_dict[session][cond_id] = trial_list
-        avg_conds[session].append(np.mean(trial_list, 0))
+        avg_conds[session].append(np.mean(smth_trial_list, 0))
 
 session_list = list(avg_conds.keys())
 avg_cond_arr = np.array(list(avg_conds.values())) # (days, conds, bins, chans)
@@ -97,7 +99,7 @@ for day in range(ndays):
 
 import wandb
 
-with wandb.init(project='Alignment-Verification', name='PSTH_test') as run:
+with wandb.init(project='Alignment-Verification', name='Non smooth test') as run:
 
     # # PLOT COND AVG
 
@@ -168,76 +170,76 @@ with wandb.init(project='Alignment-Verification', name='PSTH_test') as run:
     # PLOT SINGLE TRIAL COND AVG
 
 
-    # session_list_new = []
-    # for idx, session in enumerate(session_list):
-    #     cond_list = []
-    #     for condi in trials_dict[session]:
-    #         tr_list = []
-    #         for trial in trials_dict[session][condi]:
-    #             trial = np.dot(trial, alignment_matrices[idx].T)
-    #             trial = trial + alignment_biases[idx]
-    #             tr_list.append(trial)
-    #         cond_list.append(np.mean(tr_list, 0))
-    #     session_list_new.append(cond_list)
+    session_list_new = []
+    for idx, session in enumerate(session_list):
+        cond_list = []
+        for condi in trials_dict[session]:
+            tr_list = []
+            for trial in trials_dict[session][condi]:
+                trial = np.dot(trial, alignment_matrices[idx].T)
+                trial = trial + alignment_biases[idx]
+                tr_list.append(trial)
+            cond_list.append(np.mean(tr_list, 0))
+        session_list_new.append(cond_list)
 
 
-    # fig = go.Figure()
-    # for session in session_list_new:
-    #     for condi, cond in enumerate(session):
-    #         print(cond.shape)
-    #         fig.add_trace(
-    #             go.Scatter3d(
-    #                 x=cond[:, 0], 
-    #                 y=cond[:, 1], 
-    #                 z=cond[:, 2],
-    #                 mode='lines',
-    #                 line=dict(color=f'{colors.rgb2hex(cm.tab10(condi))}'),
-    #             )
-    #         )
+    fig = go.Figure()
+    for session in session_list_new:
+        for condi, cond in enumerate(session):
+            print(cond.shape)
+            fig.add_trace(
+                go.Scatter3d(
+                    x=cond[:, 0], 
+                    y=cond[:, 1], 
+                    z=cond[:, 2],
+                    mode='lines',
+                    line=dict(color=f'{colors.rgb2hex(cm.tab10(condi))}'),
+                )
+            )
 
-    # fig.update_layout(
-    #     width=460,
-    #     height=500,
-    #     autosize=False,
-    #     showlegend=False,
-    #     title={
-    #         'text': "Multisession Single Trial (Condition Averaged) PCs",
-    #         'y':0.96,
-    #         'yanchor': 'bottom'
-    #     },
-    #     scene=dict(
-    #         xaxis_showspikes=False,
-    #         yaxis_showspikes=False,
-    #         zaxis_showspikes=False,
-    #         xaxis_title="PC1",
-    #         yaxis_title="PC2",
-    #         zaxis_title="PC3",
-    #         camera=dict(
-    #             center=dict(
-    #                 x=0.065,
-    #                 y=0.0,
-    #                 z=-0.075,
-    #                 # z=-0.12,
-    #             ),
-    #             eye=dict(
-    #                 x=1.3, 
-    #                 y=1.3, 
-    #                 z=1.3
-    #             )
-    #         ),
-    #         aspectratio = dict( x=1, y=1, z=1 ),
-    #         aspectmode = 'manual'
-    #     ),
-    # )
+    fig.update_layout(
+        width=460,
+        height=500,
+        autosize=False,
+        showlegend=False,
+        title={
+            'text': "Multisession Single Trial (Condition Averaged) PCs",
+            'y':0.96,
+            'yanchor': 'bottom'
+        },
+        scene=dict(
+            xaxis_showspikes=False,
+            yaxis_showspikes=False,
+            zaxis_showspikes=False,
+            xaxis_title="PC1",
+            yaxis_title="PC2",
+            zaxis_title="PC3",
+            camera=dict(
+                center=dict(
+                    x=0.065,
+                    y=0.0,
+                    z=-0.075,
+                    # z=-0.12,
+                ),
+                eye=dict(
+                    x=1.3, 
+                    y=1.3, 
+                    z=1.3
+                )
+            ),
+            aspectratio = dict( x=1, y=1, z=1 ),
+            aspectmode = 'manual'
+        ),
+    )
 
-    # fig.update_layout(margin=dict(r=0, l=0, b=0, t=20))
-    # config = {'displayModeBar': False}
+    fig.update_layout(margin=dict(r=0, l=0, b=0, t=20))
+    config = {'displayModeBar': False}
 
-    # html_string = fig.to_html(config=config)
+    html_string = fig.to_html(config=config)
 
-    # wandb.log({f'PC_plots_single_trial_cond_avg': wandb.Html(html_string, inject=False)})
+    wandb.log({f'PC_plots_single_trial_cond_avg': wandb.Html(html_string, inject=False)})
 
-    # fig.write_html(f"Session_avg_single_trial_PCs.html", config=config)
+    fig.write_html(f"Session_avg_single_trial_PCs.html", config=config)
 
 
 
@@ -308,38 +310,38 @@ with wandb.init(project='Alignment-Verification', name='PSTH_test') as run:
 
     # PLOT PSTH
         
-    channel = 0
+    # channel = 0
 
-    session_list_new = []
-    for idx, session in enumerate(session_list):
-        cond_list = []
-        for condi in trials_dict[session]:
-            if condi <= 3:
-                tr_list = []
-                for trial in trials_dict[session][condi]:
-                    tr_list.append(trial[:, channel])
-                cond_list.append(np.mean(tr_list, 0))
-        session_list_new.append(cond_list)
+    # session_list_new = []
+    # for idx, session in enumerate(session_list):
+    #     cond_list = []
+    #     for condi in trials_dict[session]:
+    #         if condi <= 3:
+    #             tr_list = []
+    #             for trial in trials_dict[session][condi]:
+    #                 tr_list.append(trial[:, channel])
+    #             cond_list.append(np.mean(tr_list, 0))
+    #     session_list_new.append(cond_list)
 
-    nrows = math.ceil(len(session_list) / 3)
-    ncols = 3
+    # nrows = math.ceil(len(session_list) / 3)
+    # ncols = 3
 
-    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(18, nrows * 4))
+    # fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(18, nrows * 4))
 
-    ids = 0
-    for irow in range(nrows):
-        for icol in range(ncols):
-            ax = axes[irow, icol]
-            if ids < len(session_list):
-                ax.set_title(session_list[ids])
-                for condi, cond in enumerate(session_list_new[ids]):
-                    ax.plot(cond, color=cm.tab10(condi))
-                ids += 1
+    # ids = 0
+    # for irow in range(nrows):
+    #     for icol in range(ncols):
+    #         ax = axes[irow, icol]
+    #         if ids < len(session_list):
+    #             ax.set_title(session_list[ids])
+    #             for condi, cond in enumerate(session_list_new[ids]):
+    #                 ax.plot(cond, color=cm.tab10(condi))
+    #             ids += 1
 
-    st = fig.suptitle(f'Condition 1-3 PSTHs for Channel {channel}')
-    plt.savefig(f'cond_1-3_chan_{channel}_PSTH.png', bbox_extra_artists=[st], bbox_inches='tight')
+    # st = fig.suptitle(f'Condition 1-3 PSTHs for Channel {channel}')
+    # plt.savefig(f'cond_1-3_chan_{channel}_PSTH.png', bbox_extra_artists=[st], bbox_inches='tight')
 
-    wandb.log({f'Channel_{channel}_cond_1-3_PSTHs': wandb.Image(f'cond_1-3_chan_{channel}_PSTH.png')})
+    # wandb.log({f'Channel_{channel}_cond_1-3_PSTHs': wandb.Image(f'cond_1-3_chan_{channel}_PSTH.png')})
 
 
 

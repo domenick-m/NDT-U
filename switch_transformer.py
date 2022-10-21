@@ -278,7 +278,7 @@ class Transformer(Module):
             final_loss (Tensor): The loss. Size=[1]
             pred_rates (Tensor): The predicted rates. Size=[B, T, N]
         '''
-        if not self.training: #TEST this!!!!!!!!!!!!!!!!!!!!!!!!!
+        if not self.training: 
             spikes = torch.clamp(spikes, max=self.max_train_spks)
 
         pred_rates = torch.empty_like(spikes)

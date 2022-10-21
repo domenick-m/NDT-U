@@ -57,6 +57,15 @@ def chop(data, seq_len, overlap):
     strides = (data.strides[0] * (seq_len - overlap), data.strides[0], data.strides[1])
     return np.lib.stride_tricks.as_strided(data, shape, strides).copy().astype('f')
 
+def smooth_spikes(data, gauss_width, bin_width, causal):
+    kern_sd = int(gauss_width / bin_width)
+    window = signal.gaussian(kern_sd * 6, kern_sd, sym=True)
+    if causal: 
+        window[len(window) // 2:] = 0
+    window /= np.sum(window)
+    filt = lambda x: np.convolve(x, window, 'same')
+    return np.apply_along_axis(filt, 0, data)
+
 def get_pretraining_data(config):
     ''' Get spikes to train NDT with
     '''
@@ -90,15 +99,23 @@ def get_pretraining_data(config):
         # this involves saving the paramters in the config that affect the dataset and if they have changed,
         #  store another copy
 
+trials_dict = None
+
+def get_trial_data():
+    global trials_dict
+    return trials_dict
+
 def get_alignment_matricies(config):
     ''' 
     '''
+    global trials_dict
     # Cache datasets for later use
     populate_datasets(config)
 
     session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
 
     avg_conds = {}
+    trials_dict = {}
 
     for session in config.data.pretrain_sessions:
         dataset = copy.deepcopy(datasets[session])
@@ -126,11 +143,15 @@ def get_alignment_matricies(config):
             trial_data.loc[indices, 'condition'] = id
 
         avg_conds[session] = []
+        trials_dict[session] = {}
         for cond_id, trials in trial_data.groupby('condition'):
             trial_list = []
+            smth_trial_list = []
             for trial_id, trial in trials.groupby('trial_id'):
                 trial_list.append(trial.spikes.to_numpy())
-            avg_conds[session].append(np.mean(trial_list, 0))
+                smth_trial_list.append(trial.spikes_smth.to_numpy())
+            trials_dict[session][cond_id] = trial_list
+            avg_conds[session].append(np.mean(smth_trial_list, 0))
 
     session_list = list(avg_conds.keys())
     avg_cond_arr = np.array(list(avg_conds.values())) # (days, conds, bins, chans)

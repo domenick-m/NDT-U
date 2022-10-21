@@ -217,25 +217,27 @@ class Transformer(Module):
         self.seq_len = config['train']['seq_len']
         self.max_train_spks = dataset.max_train_spks
 
-        self.scale = math.sqrt(self.factor_dim)
+        self.scale = math.sqrt(self.factor_dim * config.model.e2)
         self.n_layers = config['model']['n_layers']
         self.rate_dropout = nn.Dropout(config['model']['dropout_rates'])
         self.embedding_dropout = nn.Dropout(p=config['model']['dropout_embedding'])
 
-        pe = torch.zeros(self.seq_len, self.factor_dim)
+        pe = torch.zeros(self.seq_len, self.factor_dim * config.model.e2)
         position = torch.arange(0, self.seq_len, dtype=torch.float).unsqueeze(1)
         self.register_buffer('pe', position.long())
-        self.pos_embedding = nn.Embedding(self.seq_len, self.factor_dim)
+        self.pos_embedding = nn.Embedding(self.seq_len, self.factor_dim * config.model.e2)
 
-        encoder_layer = EncoderLayer(config, self.factor_dim, self.seq_len)
-        self.encoder = Encoder(config, self.factor_dim, encoder_layer, self.seq_len)
+        encoder_layer = EncoderLayer(config, self.factor_dim * config.model.e2, self.seq_len)
+        self.encoder = Encoder(config, self.factor_dim * config.model.e2, encoder_layer, self.seq_len)
+        self.ch_embed = nn.Linear(1, config.model.e1)
+        self.time_w = nn.ModuleList([nn.Linear(self.seq_len, self.seq_len) for i in range(config.model.e1)])
         # self.decoder = nn.Linear(self.factor_dim, self.factor_dim)
 
         self.readin, self.readout = nn.ModuleDict({}), nn.ModuleDict({})
         matrices, biases, sessions = get_alignment_matricies(config)
         for idx, session in enumerate(sessions):
             session = session.replace('.', '_')
-            self.readin[session] = nn.Linear(self.n_channels, self.factor_dim)
+            self.readin[session] = nn.Linear(self.n_channels * config.model.e1, self.factor_dim * config.model.e2)
             if not config.model.rand_readin_init:
                 self.readin[session].weight = torch.nn.Parameter(matrices[idx][:self.factor_dim, :])
                 self.readin[session].bias = torch.nn.Parameter(biases[idx][:self.factor_dim])
@@ -244,7 +246,7 @@ class Transformer(Module):
                     self.readin[session].bias.requires_grad = False
             self.readin[session] = self.readin[session].to(device)
 
-            self.readout[session] = nn.Linear(self.factor_dim, self.n_channels)
+            self.readout[session] = nn.Linear(self.factor_dim * config.model.e2, self.n_channels)
             # self.readout[session].weight = torch.nn.Parameter(matrices[idx].T[:, :self.factor_dim])
             # self.readout[session].bias = torch.nn.Parameter(biases[idx])
             self.readout[session] = self.readout[session].to(device)
@@ -268,6 +270,10 @@ class Transformer(Module):
                 if parameter.dim() > 1:
                     nn.init.normal_(parameter, mean=0.0, std=std)
 
+        for parameter in self.parameters():
+            if parameter.dim() > 1:
+                nn.init.normal_(parameter, mean=0.0, std=0.00001)
+
     def forward(self, spikes, sessions, labels=None):
         ''' Forward pass.
 
@@ -278,15 +284,27 @@ class Transformer(Module):
             final_loss (Tensor): The loss. Size=[1]
             pred_rates (Tensor): The predicted rates. Size=[B, T, N]
         '''
-        if not self.training: #TEST this!!!!!!!!!!!!!!!!!!!!!!!!!
+        if not self.training: 
             spikes = torch.clamp(spikes, max=self.max_train_spks)
+
+
+        ch_emb = self.ch_embed(spikes[:, :, 0].unsqueeze(-1))
+        spikes_0 = self.time_w[0](ch_emb[:, :, 0].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)
+        for e_i in range(1, self.config.model.e1):
+            spikes_0 = torch.cat((spikes_0, self.time_w[e_i](ch_emb[:, :, e_i].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)), -1)
+        for i in range(1, self.n_channels):
+            ch_emb = self.ch_embed(spikes[:, :, i].unsqueeze(-1))
+            t_emb = self.time_w[0](ch_emb[:, :, 0].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)
+            for e_i in range(1, self.config.model.e1):
+                t_emb = torch.cat((t_emb, self.time_w[e_i](ch_emb[:, :, e_i].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)), -1)
+            spikes_0 = torch.cat((spikes_0, t_emb), -1)
 
         pred_rates = torch.empty_like(spikes)
 
         for session in set(sessions):
             session = session.replace('.', '_')
             indices = [index for index, elem in enumerate(sessions) if elem.replace('.', '_') == session]
-            factors = self.readin[session](spikes[indices, :, :])
+            factors = self.readin[session](spikes_0[indices, :, :])
 
             factors = factors.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
             factors += self.pos_embedding(self.pe)

@@ -19,7 +19,7 @@ from nlb_tools.evaluation import bits_per_spike as bits_per_spike2
 import subprocess
 
 # #────#
-from transformer import Transformer
+from emb_transformer import Transformer
 # from transformer_deberta import Transformer
 from utils_f import (get_config,
                    metric_comparison,
@@ -150,9 +150,9 @@ def run_training(config, device, name):
 
     model = Transformer(config, dataset, name, device).to(device)
     train(model, train_dataloader, val_dataloader, device)
-    # test_eval(config, model)
+    test(config, model)
 
-    wandb_cleanup()
+    # wandb_cleanup()
     torch.cuda.empty_cache()
 
 

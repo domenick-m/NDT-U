@@ -1,7 +1,7 @@
 from inspect import cleandoc
 import plotly.graph_objects as go
 
-def plot_rates_vs_spks_all(wandb, channels, train_rates, smth_spikes):
+def plot_rates_vs_spks_all(channels, train_rates, smth_spikes):
     def rates_string(neuron):
         array_string = 'y: ['
         for i in train_rates[:1000,neuron]:
@@ -26,7 +26,7 @@ def plot_rates_vs_spks_all(wandb, channels, train_rates, smth_spikes):
         <body>
         <!-- partial:index.partial.html --><div id="legend" style="height: 50px"></div>
         <div style="height:450px; overflow-y: auto">
-            <div id="plot" style="height:2500px"></div>
+            <div id="plot" style="height:8000px"></div>
         </div>
         <div id="xaxis" style="height: 60px"></div>
         <!-- partial --><script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.3.1/plotly.min.js"></script>
@@ -199,7 +199,7 @@ def plot_rates_vs_spks_all(wandb, channels, train_rates, smth_spikes):
         'Heldin' if channels == 'heldin' else 'Heldout'
     ) + cleandoc(
         '''
-            Channels", 
+         Channels", 
                 y:0.5, 
                 x:0.025
             },
@@ -279,7 +279,7 @@ def plot_rates_vs_spks_all(wandb, channels, train_rates, smth_spikes):
                             margin: { l: 60, t: 0 , r: 40},
                         });
                     } else {
-                        Plotly.update(axisDiv, bottomTraces,'){
+                        Plotly.update(axisDiv, bottomTraces,{
                             yaxis: { tickmode: "array", tickvals: [], fixedrange: true },
                             xaxis: {
                                 tickmode: "array",
@@ -297,6 +297,7 @@ def plot_rates_vs_spks_all(wandb, channels, train_rates, smth_spikes):
         </script></body></html>
         '''
     )
+    return html_string
 
-    wandb.log({f"Spikes vs Rates {'Heldin' if channels == 'heldin' else 'Heldout'}": wandb.Html(html_string, inject=False)})
+    # wandb.log({f"Spikes vs Rates {'Heldin' if channels == 'heldin' else 'Heldout'}": wandb.Html(html_string, inject=False)})
 
