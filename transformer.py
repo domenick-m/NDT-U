@@ -167,6 +167,33 @@ class Encoder(Module):
             src = self.norm(src)
         return src
 
+class PositionalEncoding(nn.Module):
+    r"""
+    ! FYI - needs even d_model if not learned.
+    """
+    def __init__(self, cfg, trial_length, d_model, device):
+        super().__init__()
+        self.dropout = nn.Dropout(p=cfg['model']['dropout_embedding'])
+        pe = torch.zeros(trial_length, d_model).to(device) # * Can optim to empty
+        position = torch.arange(0, trial_length, dtype=torch.float).unsqueeze(1)
+        self.learnable = True
+        if self.learnable:
+            self.register_buffer('pe', position.long())
+            self.pos_embedding = nn.Embedding(trial_length, d_model) # So maybe it's here...?
+        
+
+    def update_config(self, config):
+        self.dropout = nn.Dropout(config['model']['dropout_embedding'])
+
+    def forward(self, x):
+        if self.learnable:
+            x = x + self.pos_embedding(self.pe) # t x 1 x d
+        else:
+            x = x + self.pe[:x.size(0), :] # t x 1 x d, # t x b x d
+        return self.dropout(x)
+
+
+
 class Transformer(Module):
     '''Simplified version of Joel Ye's NDT with unvdivided attention added.
     (https://github.com/snel-repo/neural-data-transformers)
@@ -219,21 +246,37 @@ class Transformer(Module):
 
         pe = torch.zeros(self.full_length, self.factor_dim * config['model']['e2'])
         position = torch.arange(0, self.full_length, dtype=torch.float).unsqueeze(1)
-        self.register_buffer('pe', position.long())
-        self.pos_embedding = nn.Embedding(self.full_length, self.factor_dim * config['model']['e2'])
+        # self.register_buffer('pe', position.long())
+        # self.pos_embedding = nn.Embedding(self.full_length, self.factor_dim * config['model']['e2'])
+        div_term = torch.exp(torch.arange(0, self.factor_dim * config['model']['e2'], 2).float() * (-math.log(10000.0) / (self.factor_dim * config['model']['e2'])))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0).transpose(0, 1) # t x 1 x d
+        self.register_buffer('pe', pe)
 
+        # self.pos_encoder = PositionalEncoding(config, dataset.full_length, self.factor_dim * config['model']['e2'], torch.device('cuda:0'))
+
+        
+        self.pos_embedding = Parameter(self.pe)
+        # self.pos_embedding = Parameter(torch.randn((self.full_length, 1, self.factor_dim * config['model']['e2'])))
         encoder_layer = EncoderLayer(config, self.factor_dim * config['model']['e2'], self.full_length)
         self.encoder = Encoder(config, self.factor_dim * config['model']['e2'], encoder_layer, self.full_length)
-        self.readin = nn.Linear(self.n_neurons * config['model']['e1'], self.factor_dim * config['model']['e2'])
+        
+        self.pre_readin = nn.Linear(self.n_heldin * config['model']['e1'] + self.n_heldin, self.factor_dim * config['model']['e2'])
+        self.readin = nn.Linear(self.factor_dim * config['model']['e2'], self.factor_dim * config['model']['e2'])
+        
         self.readout1 = nn.Linear(self.factor_dim * config['model']['e2'], self.factor_dim * config['model']['e2'] * 2)
         self.readout2 = nn.Linear(self.factor_dim * config['model']['e2'] * 2, self.factor_dim * config['model']['e2'])
         self.readout3 = nn.Linear(self.factor_dim * config['model']['e2'], self.n_neurons)
         self.readout1_dropout = nn.Dropout(p=config['model']['dropout'])
         self.readout2_dropout = nn.Dropout(p=config['model']['dropout'])
+        
         self.act = nn.GELU()
 
         self.ch_embed = nn.Linear(1, config['model']['e1'])
-        self.time_w = nn.ModuleList([nn.Linear(self.full_length, self.full_length) for i in range(config['model']['e1'])])
+        time_weight_mat = nn.Linear(self.full_length, self.full_length)
+        self.time_w = nn.ModuleList([copy.deepcopy(time_weight_mat) for i in range(config['model']['e1'])])
+        
         #
 
         self.attn_mask = None
@@ -265,17 +308,32 @@ class Transformer(Module):
         spikes_0 = self.time_w[0](ch_emb[:, :, 0].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)
         for e_i in range(1, self.config['model']['e1']):
             spikes_0 = torch.cat((spikes_0, self.time_w[e_i](ch_emb[:, :, e_i].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)), -1)
-        for i in range(1, self.n_neurons):
+            # spikes_0 = torch.cat((spikes_0, torch.ones_like(self.time_w[e_i](ch_emb[:, :, e_i].unsqueeze(-1).permute(0,2,1)).permute(0,2,1))), -1)
+        spikes_0 = torch.cat((spikes_0, spikes[:, :, 0].unsqueeze(-1)), -1)
+        
+        for i in range(1, self.n_heldin):
             ch_emb = self.ch_embed(spikes[:, :, i].unsqueeze(-1))
             t_emb = self.time_w[0](ch_emb[:, :, 0].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)
             for e_i in range(1, self.config['model']['e1']):
                 t_emb = torch.cat((t_emb, self.time_w[e_i](ch_emb[:, :, e_i].unsqueeze(-1).permute(0,2,1)).permute(0,2,1)), -1)
             spikes_0 = torch.cat((spikes_0, t_emb), -1)
-        
-        spikes = self.readin(spikes_0)
+            spikes_0 = torch.cat((spikes_0, spikes[:, :, i].unsqueeze(-1)), -1)
 
-        spikes = spikes.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
-        spikes += self.pos_embedding(self.pe)
+        emb_spikes = spikes_0[0,:,:].clone()
+        
+        spikes = self.pre_readin(spikes_0)
+        spikes = self.readin(self.act(spikes))
+
+        emb_factors = spikes[0,:,:].clone()
+
+        # spikes = spikes.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
+        spikes = spikes.permute(1, 0, 2) # [B x T x N] -> [T x B x N]
+
+        # spikes += self.pe
+        # print(self.pe)
+        spikes += self.pos_embedding
+        emb_pos_fac = spikes[:,0,:].clone()
+
         spikes = self.embedding_dropout(spikes)
         attn_mask = self.get_attn_mask(spikes) # [T, T]
         output = self.encoder(spikes, attn_mask)
@@ -290,7 +348,7 @@ class Transformer(Module):
         loss = self.classifier(pred_rates, labels)
         masked_loss = loss[labels != -100]
         final_loss = masked_loss.mean()
-        return final_loss.unsqueeze(0), pred_rates
+        return final_loss.unsqueeze(0), pred_rates, emb_spikes, emb_factors, emb_pos_fac
 
     def get_attn_mask(self, src):
         ''' Gets attention mask stored on memory or creates a new one.
@@ -363,9 +421,9 @@ class Transformer(Module):
         random_spikes = torch.randint(batch.max().long(), labels.shape, dtype=torch.long, device=batch.device)
         batch[indices_randomized] = random_spikes.float()[indices_randomized]
         # Add fake heldout and forward
-        batch = torch.cat([batch, torch.zeros_like(heldout_spikes)], -1)
+        # batch = torch.cat([batch, torch.zeros_like(heldout_spikes)], -1)
         labels = torch.cat([labels, heldout_spikes], -1)
-        batch = torch.cat([batch, torch.zeros_like(forward_spikes)], 1)
+        batch = torch.cat([batch, torch.zeros((forward_spikes.shape[0], forward_spikes.shape[1], batch.shape[2]), device=batch.device)], 1)
         labels = torch.cat([labels, forward_spikes], 1)
 
         return batch, labels

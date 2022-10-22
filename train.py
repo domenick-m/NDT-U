@@ -30,6 +30,9 @@ from configs.default_config import (get_config,
                                     get_config_dict,
                                     get_wandb_config,
                                     get_config_from_file)
+
+import matplotlib.pyplot as plt
+import numpy as np
 '''──────────────────────────────── train.py ────────────────────────────────'''
 # This file train can train a single NDT-U model, start a hyper parameter sweep,
 # or add an agent to a hyperparameter sweep. It has optional arguments that can
@@ -221,7 +224,7 @@ def train(model, train_dataloader, val_dataloader, device):
                 forward_spikes, # B, T, N
             )
             # Dont need rates only loss
-            masked_loss, _ = model(masked_spikes, labels)
+            masked_loss, _, _, _, _ = model(masked_spikes, labels)
             loss = masked_loss.mean()
 
             if config['wandb']['log']:
@@ -247,16 +250,65 @@ def train(model, train_dataloader, val_dataloader, device):
 
             for step, (spikes, heldout_spikes, forward_spikes) in enumerate(val_dataloader):
                 with torch.no_grad():
+                    plt.pcolormesh(spikes[0,:,:].T.exp().cpu().numpy(), cmap = 'Reds' )
+                    plt.tight_layout()
+                    plt.savefig(f"images/{model.name}_spikes.png")
+                    plt.close()
+
                     spikes = spikes.to(device) # B, T, N
                     heldout_spikes = heldout_spikes.to(device) # B, T, N
                     forward_spikes = forward_spikes.to(device) # B, T, N
                     labels = spikes.clone()
                     labels = torch.cat([labels, heldout_spikes], -1)
                     labels = torch.cat([labels, forward_spikes], 1)
-                    spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes, device=device)], -1)
-                    spikes = torch.cat([spikes, torch.zeros_like(forward_spikes, device=device)], 1)
+                    # spikes = torch.cat([spikes, torch.zeros_like(heldout_spikes, device=device)], -1)
+                    # spikes = torch.cat([spikes, torch.zeros_like(forward_spikes, device=device)], 1)
+                    spikes = torch.cat(
+                        [
+                            spikes, 
+                            torch.zeros((forward_spikes.shape[0], forward_spikes.shape[1], spikes.shape[2]), device=device)
+                        ], 
+                        1)
 
-                    loss, rates = model(spikes, labels)
+
+                    loss, rates, emb_spks, emb_factors, emb_pos_fac = model(spikes, labels)
+
+                    plt.pcolormesh(emb_pos_fac.T.cpu().numpy(), cmap = 'Reds' )
+                    plt.tight_layout()
+                    plt.savefig(f"images/{model.name}_emb_pos_facs.png")
+                    plt.close()
+
+                    plt.pcolormesh(emb_factors.T.cpu().numpy(), cmap = 'Reds' )
+                    plt.tight_layout()
+                    plt.savefig(f"images/{model.name}_emb_facs.png")
+                    plt.close()
+
+                    plt.pcolormesh(emb_spks.flip(1).T.cpu().numpy(), cmap = 'Reds' )
+                    plt.tight_layout()
+                    plt.savefig(f"images/{model.name}_emb_spks.png")
+                    plt.close()
+
+                    plt.pcolormesh(rates[0,:,:].T.exp().cpu().numpy(), cmap = 'Reds' )
+                    plt.tight_layout()
+                    plt.savefig(f"images/{model.name}_rates.png")
+                    plt.close()
+                    
+                    # pos_emb = model.pe[:,0,:].clone()
+                    pos_emb = model.pos_embedding[:,0,:].T.clone()
+                    plt.pcolormesh(pos_emb.cpu().numpy(), cmap = 'Reds' )
+                    plt.tight_layout()
+                    plt.savefig(f"images/{model.name}_pos_emb.png")
+                    plt.close()
+
+                    wandb.log({
+                        "spikes": wandb.Image(f"images/{model.name}_spikes.png"),
+                        "rates": wandb.Image(f"images/{model.name}_rates.png"), 
+                        "emb spikes": wandb.Image(f"images/{model.name}_emb_spks.png"),
+                        "emb factors": wandb.Image(f"images/{model.name}_emb_facs.png"),
+                        "emb pos factors": wandb.Image(f"images/{model.name}_emb_pos_facs.png"),
+                        "pos emb": wandb.Image(f"images/{model.name}_pos_emb.png")
+                    })
+
                     all_loss.append(loss)
                     eval_rates.append(rates)
                     eval_ho_spikes.append(heldout_spikes)
@@ -264,12 +316,12 @@ def train(model, train_dataloader, val_dataloader, device):
 
                     heldout_masked = labels.clone()
                     heldout_masked[:,:,:-heldout_spikes.size(-1)] = -100
-                    ho_loss, ho_rates = model(spikes, heldout_masked)
+                    ho_loss, ho_rates, _, _, _ = model(spikes, heldout_masked)
                     heldout_loss.append(ho_loss)
 
                     forward_masked = labels.clone()
                     forward_masked[:,:-forward_spikes.size(1),:] = -100
-                    fw_loss, fw_rates = model(spikes, forward_masked)
+                    fw_loss, fw_rates, _, _, _ = model(spikes, forward_masked)
                     forward_loss.append(fw_loss)
 
                     heldin_masked = labels.clone()

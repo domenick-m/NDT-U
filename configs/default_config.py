@@ -44,10 +44,11 @@ config.train.early_stopping = False # Whether or not the model stops training du
 config.train.es_min_bps= 0.31 # The point at which a model will be early stopped if it's co-bps score falls below this
 config.train.es_chk_pnt= 0.5 # When should the model start checking if it should early stop, 0.5 = halfway through the total epochs it will starting checking if co-bps falls below es_min_bps
 
-config.train.init_lr = 0.0005 # The initial learning rate to be used by the optimizer
+config.train.init_lr = 0.005 # The initial learning rate to be used by the optimizer
 config.train.optimizer = 'AdamW' # ['AdamW',] The optimizer to use, other may be added in setup.py
 config.train.scheduler = 'Cosine' # ['None', 'Cosine',] The scheduler to use on the learning rate, other may be added in setup.py
-config.train.warmup_steps = 1500 # Warmup steps used by Cosine scheduler, icreases lr to 1 in this many steps before it follows cosine decay
+config.train.warmup_steps = 500 # Warmup steps used by Cosine scheduler, icreases lr to 1 in this many steps before it follows cosine decay
+# config.train.warmup_steps = 1500 # Warmup steps used by Cosine scheduler, icreases lr to 1 in this many steps before it follows cosine decay
 
 config.train.max_grad_norm = 200.0 # The maximum value a gradient can have before it is clipped, avoids exploding gradient
 config.train.weight_decay = 1.000e-2 # The weight decay value used by AdamW, kind of like L2 Reg but better
@@ -61,8 +62,8 @@ config.train.ramp_end = 10000 # Epoch when the number of timesteps being maksed 
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.model = CN()
-config.model.n_heads = 6 # The number of heads used in UndividedMultiheadAttention
-config.model.n_layers = 12 # The number of EncoderLayers the Encoder should have
+config.model.n_heads = 2 # The number of heads used in UndividedMultiheadAttention
+config.model.n_layers = 8 # The number of EncoderLayers the Encoder should have
 config.model.hidden_size = 4096 # The size of the linear layers in each EncoderLayer
 config.model.undivided_attn = True # The size of the linear layers in each EncoderLayer
 
@@ -72,15 +73,15 @@ config.model.factor_dim = 64
 
 config.model.dropout = 0.4 # Overall dropout, used in EncoderLayer
 config.model.dropout_rates = 0.4 # Dropout of model output (rates)
-config.model.dropout_embedding = 0.4 # Dropout applied after pos_embedding is added
+config.model.dropout_embedding = 0.5 # Dropout applied after pos_embedding is added
 config.model.dropout_attention = 0.4 # Dropout applied to the attention matrix in UndividedMultiheadAttention
 
 config.model.loss_ratio = 0.5 # Percentage of tokens that loss is computed with
 config.model.mask_ratio = 0.95 # Percentage of tokens being used to compute the loss are zero masked
 config.model.random_ratio = 1.0 # Percentage of tokens being used to compute the loss (that are not zero masked) that should be randomized
 
-config.model.norm = "layer" # ['layer', 'scale'] The normalization to be used in the EncoderLayers
-config.model.activation = "relu" # ['relu', 'gelu']
+config.model.norm = "switch" # ['layer', 'scale'] The normalization to be used in the EncoderLayers
+config.model.activation = "gelu" # ['relu', 'gelu']
 config.model.max_spike_count = 20 # Max number of spikes allowed, any count above is clipped to this
 
 config.model.xavier = False # Whether or not xaiver init should be used, if False use the init from T-fixup
