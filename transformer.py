@@ -332,7 +332,7 @@ class Transformer(Module):
         # spikes += self.pe
         # print(self.pe)
         spikes += self.pos_embedding
-        emb_pos_fac = spikes[:,0,:].clone()
+        emb_pos_fac = spikes[0,:,:].clone()
 
         spikes = self.embedding_dropout(spikes)
         attn_mask = self.get_attn_mask(spikes) # [T, T]

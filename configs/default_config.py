@@ -44,7 +44,7 @@ config.train.early_stopping = False # Whether or not the model stops training du
 config.train.es_min_bps= 0.31 # The point at which a model will be early stopped if it's co-bps score falls below this
 config.train.es_chk_pnt= 0.5 # When should the model start checking if it should early stop, 0.5 = halfway through the total epochs it will starting checking if co-bps falls below es_min_bps
 
-config.train.init_lr = 0.005 # The initial learning rate to be used by the optimizer
+config.train.init_lr = 0.0001 # The initial learning rate to be used by the optimizer
 config.train.optimizer = 'AdamW' # ['AdamW',] The optimizer to use, other may be added in setup.py
 config.train.scheduler = 'Cosine' # ['None', 'Cosine',] The scheduler to use on the learning rate, other may be added in setup.py
 config.train.warmup_steps = 500 # Warmup steps used by Cosine scheduler, icreases lr to 1 in this many steps before it follows cosine decay
@@ -62,8 +62,8 @@ config.train.ramp_end = 10000 # Epoch when the number of timesteps being maksed 
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.model = CN()
-config.model.n_heads = 2 # The number of heads used in UndividedMultiheadAttention
-config.model.n_layers = 8 # The number of EncoderLayers the Encoder should have
+config.model.n_heads = 4 # The number of heads used in UndividedMultiheadAttention
+config.model.n_layers = 4 # The number of EncoderLayers the Encoder should have
 config.model.hidden_size = 4096 # The size of the linear layers in each EncoderLayer
 config.model.undivided_attn = True # The size of the linear layers in each EncoderLayer
 

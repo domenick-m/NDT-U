@@ -294,7 +294,7 @@ def train(model, train_dataloader, val_dataloader, device):
                     plt.close()
                     
                     # pos_emb = model.pe[:,0,:].clone()
-                    pos_emb = model.pos_embedding[:,0,:].T.clone()
+                    pos_emb = model.pos_embedding[0,:,:].T.clone()
                     plt.pcolormesh(pos_emb.cpu().numpy(), cmap = 'Reds' )
                     plt.tight_layout()
                     plt.savefig(f"images/{model.name}_pos_emb.png")
