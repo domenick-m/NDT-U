@@ -29,6 +29,7 @@ trials_dict = {}
 
 for session in config.data.pretrain_sessions:
     dataset = copy.deepcopy(datasets[session])
+    dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
     dataset.resample(config.data.bin_size / 1000)
     dataset.smooth_spk(config.data.smth_std, name='smth')
 
@@ -52,15 +53,26 @@ for session in config.data.pretrain_sessions:
         indices = trial_data.index[trial_data['X&Y'] == xy]
         trial_data.loc[indices, 'condition'] = id
 
+    n_channels = trial_data.spikes.shape[-1]
+
+    n_heldout = int(config.data.heldout_pct * n_channels)
+    np.random.seed(config.setup.seed)
+    heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
+    heldin_channels = torch.ones(n_channels, dtype=bool)
+    heldin_channels[heldout_channels] = False
+    print(heldout_channels)
+
     avg_conds[session] = []
     trials_dict[session] = {}
     for cond_id, trials in trial_data.groupby('condition'):
         trial_list = []
         smth_trial_list = []
         for trial_id, trial in trials.groupby('trial_id'):
-            trial_list.append(trial.spikes.to_numpy())
-            smth_trial_list.append(trial.spikes_smth.to_numpy())
-        trials_dict[session][cond_id] = trial_list
+            # trial_list.append(trial.spikes.to_numpy())
+            # smth_trial_list.append(trial.spikes_smth.to_numpy())
+            trial_list.append(trial.spikes.to_numpy()[:, heldin_channels])
+            smth_trial_list.append(trial.spikes_smth.to_numpy()[:, heldin_channels])
+        trials_dict[session][cond_id] = smth_trial_list
         avg_conds[session].append(np.mean(smth_trial_list, 0))
 
 session_list = list(avg_conds.keys())
@@ -99,18 +111,96 @@ for day in range(ndays):
 
 import wandb
 
-with wandb.init(project='Alignment-Verification', name='Non smooth test') as run:
+# with wandb.init(project='Alignment-Verification', name='All Channel PCs') as run:
+with wandb.init(project='Alignment-Verification', name='X-Corr Removed Heldin Channel PCs') as run:
+# with wandb.init(project='Alignment-Verification', name='Heldin Channel PCs') as run:
 
     # # PLOT COND AVG
 
 
-    # fig = go.Figure()
-    # for idx, session in enumerate(session_list):
-    #     avg_cond_arr = np.array(list(avg_conds[session])) #(conds, bins, chans)
-    #     for condi, cond in enumerate(avg_cond_arr):
-    #         cond = np.dot(cond, alignment_matrices[idx].T)
-    #         cond = cond + alignment_biases[idx]
+    fig = go.Figure()
+    for idx, session in enumerate(session_list):
+        avg_cond_arr = np.array(list(avg_conds[session])) #(conds, bins, chans)
+        for condi, cond in enumerate(avg_cond_arr):
+            cond = np.dot(cond, alignment_matrices[idx].T)
+            cond = cond + alignment_biases[idx]
 
+            fig.add_trace(
+                go.Scatter3d(
+                    x=cond[:, 0], 
+                    y=cond[:, 1], 
+                    z=cond[:, 2],
+                    mode='lines',
+                    line=dict(color=f'{colors.rgb2hex(cm.tab10(condi))}'),
+                )
+            )
+
+    fig.update_layout(
+        width=430,
+        height=410,
+        autosize=False,
+        showlegend=False,
+        title={
+            'text': "Condition Averaged PCs",
+            'y':0.96,
+            'yanchor': 'bottom'
+        },
+        scene=dict(
+            xaxis_showspikes=False,
+            yaxis_showspikes=False,
+            zaxis_showspikes=False,
+            xaxis_title="PC1",
+            yaxis_title="PC2",
+            zaxis_title="PC3",
+            camera=dict(
+                center=dict(
+                    x=0.065,
+                    y=0.0,
+                    z=-0.075,
+                    # z=-0.12,
+                ),
+                eye=dict(
+                    x=1.3, 
+                    y=1.3, 
+                    z=1.3
+                )
+            ),
+            aspectratio = dict( x=1, y=1, z=1 ),
+            aspectmode = 'manual'
+        ),
+    )
+
+    fig.update_layout(margin=dict(r=0, l=0, b=0, t=20))
+    config = {'displayModeBar': False}
+    html_string = fig.to_html(config=config)
+
+
+    wandb.log({'PC_plots_cond_avg': wandb.Html(html_string, inject=False)})
+
+    # fig.write_html(f"Cond_avg_PCs.html", config=config)
+
+
+
+    # # PLOT SINGLE TRIAL COND AVG
+
+
+    # session_list_new = []
+    # for idx, session in enumerate(session_list):
+    #     cond_list = []
+    #     for condi in trials_dict[session]:
+    #         tr_list = []
+    #         for trial in trials_dict[session][condi]:
+    #             trial = np.dot(trial, alignment_matrices[idx].T)
+    #             trial = trial + alignment_biases[idx]
+    #             tr_list.append(trial)
+    #         cond_list.append(np.mean(tr_list, 0))
+    #     session_list_new.append(cond_list)
+
+
+    # fig = go.Figure()
+    # for session in session_list_new:
+    #     for condi, cond in enumerate(session):
+    #         print(cond.shape)
     #         fig.add_trace(
     #             go.Scatter3d(
     #                 x=cond[:, 0], 
@@ -122,12 +212,12 @@ with wandb.init(project='Alignment-Verification', name='Non smooth test') as run
     #         )
 
     # fig.update_layout(
-    #     width=460,
-    #     height=500,
+        # width=430,
+        # height=410,
     #     autosize=False,
     #     showlegend=False,
     #     title={
-    #         'text': "Multisession Condition Avg PCs",
+    #         'text': "Multisession Single Trial PCs",
     #         'y':0.96,
     #         'yanchor': 'bottom'
     #     },
@@ -158,52 +248,41 @@ with wandb.init(project='Alignment-Verification', name='Non smooth test') as run
 
     # fig.update_layout(margin=dict(r=0, l=0, b=0, t=20))
     # config = {'displayModeBar': False}
+
     # html_string = fig.to_html(config=config)
 
+    # wandb.log({f'PC_plots_single_trial_cond_avg': wandb.Html(html_string, inject=False)})
 
-    # wandb.log({'PC_plots_cond_avg': wandb.Html(html_string, inject=False)})
-
-    # fig.write_html(f"Cond_avg_PCs.html", config=config)
-
+    # fig.write_html(f"Session_avg_single_trial_PCs.html", config=config)
 
 
-    # PLOT SINGLE TRIAL COND AVG
 
+    # PLOT SINGLE TRIAL
 
-    session_list_new = []
+    fig = go.Figure()
     for idx, session in enumerate(session_list):
-        cond_list = []
         for condi in trials_dict[session]:
-            tr_list = []
             for trial in trials_dict[session][condi]:
                 trial = np.dot(trial, alignment_matrices[idx].T)
                 trial = trial + alignment_biases[idx]
-                tr_list.append(trial)
-            cond_list.append(np.mean(tr_list, 0))
-        session_list_new.append(cond_list)
 
-
-    fig = go.Figure()
-    for session in session_list_new:
-        for condi, cond in enumerate(session):
-            print(cond.shape)
-            fig.add_trace(
-                go.Scatter3d(
-                    x=cond[:, 0], 
-                    y=cond[:, 1], 
-                    z=cond[:, 2],
-                    mode='lines',
-                    line=dict(color=f'{colors.rgb2hex(cm.tab10(condi))}'),
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=trial[:, 0], 
+                        y=trial[:, 1], 
+                        z=trial[:, 2],
+                        mode='lines',
+                        line=dict(color=f'{colors.rgb2hex(cm.tab10(condi))}'),
+                    )
                 )
-            )
 
     fig.update_layout(
-        width=460,
-        height=500,
+        width=430,
+        height=410,
         autosize=False,
         showlegend=False,
         title={
-            'text': "Multisession Single Trial (Condition Averaged) PCs",
+            'text': "Single Trial PCs",
             'y':0.96,
             'yanchor': 'bottom'
         },
@@ -236,73 +315,9 @@ with wandb.init(project='Alignment-Verification', name='Non smooth test') as run
     config = {'displayModeBar': False}
 
     html_string = fig.to_html(config=config)
-
-    wandb.log({f'PC_plots_single_trial_cond_avg': wandb.Html(html_string, inject=False)})
-
-    fig.write_html(f"Session_avg_single_trial_PCs.html", config=config)
-
-
-
-    # PLOT SINGLE TRIAL
-
-    # for idx, session in enumerate(session_list):
-    #     fig = go.Figure()
-    #     for condi in trials_dict[session]:
-    #         for trial in trials_dict[session][condi]:
-    #             trial = np.dot(trial, alignment_matrices[idx].T)
-    #             trial = trial + alignment_biases[idx]
-
-    #             fig.add_trace(
-    #                 go.Scatter3d(
-    #                     x=trial[:, 0], 
-    #                     y=trial[:, 1], 
-    #                     z=trial[:, 2],
-    #                     mode='lines',
-    #                     line=dict(color=f'{colors.rgb2hex(cm.tab10(condi))}'),
-    #                 )
-    #             )
-
-    #     fig.update_layout(
-    #         width=460,
-    #         height=500,
-    #         autosize=False,
-    #         showlegend=False,
-    #         title={
-    #             'text': "Multisession Single Trial PCs",
-    #             'y':0.96,
-    #             'yanchor': 'bottom'
-    #         },
-    #         scene=dict(
-    #             xaxis_showspikes=False,
-    #             yaxis_showspikes=False,
-    #             zaxis_showspikes=False,
-    #             xaxis_title="PC1",
-    #             yaxis_title="PC2",
-    #             zaxis_title="PC3",
-    #             camera=dict(
-    #                 center=dict(
-    #                     x=0.065,
-    #                     y=0.0,
-    #                     z=-0.075,
-    #                     # z=-0.12,
-    #                 ),
-    #                 eye=dict(
-    #                     x=1.3, 
-    #                     y=1.3, 
-    #                     z=1.3
-    #                 )
-    #             ),
-    #             aspectratio = dict( x=1, y=1, z=1 ),
-    #             aspectmode = 'manual'
-    #         ),
-    #     )
-
-    #     fig.update_layout(margin=dict(r=0, l=0, b=0, t=20))
-    #     config = {'displayModeBar': False}
-
-    #     html_string = fig.to_html(config=config)
-    #     # with wandb.init(project='example-sweep', name=f'PC_{session}') as run:
-    #     #     wandb.log({f'PC_{session}': wandb.Html(html_string, inject=False)})
+    # with wandb.init(project='example-sweep', name=f'PC_{session}') as run:
+    #     wandb.log({f'PC_{session}': wandb.Html(html_string, inject=False)})
+    wandb.log({f'PC_plots_single_trial': wandb.Html(html_string, inject=False)})
 
     #     fig.write_html(f"Session_{session}_single_trial_PCs.html", config=config)
 

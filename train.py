@@ -19,7 +19,7 @@ from nlb_tools.evaluation import bits_per_spike as bits_per_spike2
 import subprocess
 
 # #────#
-from emb_transformer import Transformer
+from transformer import Transformer
 # from transformer_deberta import Transformer
 from utils_f import (get_config,
                    metric_comparison,
@@ -59,6 +59,9 @@ from yacs.config import CfgNode as CN
 import signal
 import sys
 import subprocess
+
+import matplotlib.pyplot as plt
+import numpy as np
 from test import test
 
 from utils.data.create_local_t5data import get_trial_data
@@ -269,7 +272,7 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
             )
 
             # with torch.cuda.amp.autocast():
-            loss, _ = model(masked_spikes, names, labels)
+            loss, _, _, _, _, _, _ = model(masked_spikes, names, labels)
             # with torch.cuda.amp.autocast():
             #     loss, _ = model(masked_spikes, names, labels)
 
@@ -309,40 +312,100 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
             model.eval() # turns off dropout
 
             with torch.no_grad():
-                spikes, ho_spikes, names = val_dataloader 
+                if model.has_heldout:
+                    spikes, ho_spikes, names = val_dataloader 
+                else:
+                    spikes, names = val_dataloader
+                    ho_spikes = None
+
                 labels = spikes.clone()
                 hi_spikes = spikes.clone()
                 
-                if model.has_heldout:
-                    labels = torch.cat([labels, ho_spikes], -1)
-                    spikes = torch.cat([spikes, torch.zeros_like(ho_spikes, device=device)], -1)
+                # if model.has_heldout:
+                #     labels = torch.cat([labels, ho_spikes], -1)
 
                 # with torch.cuda.amp.autocast():
-                loss, rates = model(spikes, names, labels)
+                loss, rates, factors_saved, pe_saved, pe_factors_saved, output_saved, readouts = model(spikes, names, labels)
 
-                if model.has_heldout:
-                    n_heldout = ho_spikes.shape[-1]
+                plt.pcolormesh(pe_factors_saved.T.cpu().numpy(), cmap = 'Reds' )
+                plt.tight_layout()
+                plt.savefig(f"images/{model.name}_pos_facs.png")
+                plt.close()
 
-                    hi_nll = loss[:,:, :-n_heldout]
-                    ho_nll = loss[:,:, -n_heldout:]
-                    hi_lt_nll = loss[:,-1, :-n_heldout]
-                    ho_lt_nll = loss[:,-1, -n_heldout:]
+                plt.pcolormesh(factors_saved.T.cpu().numpy(), cmap = 'Reds' )
+                plt.tight_layout()
+                plt.savefig(f"images/{model.name}_facs.png")
+                plt.close()
 
-                    hi_rates = rates[:,:, :-n_heldout].exp()
-                    ho_rates = rates[:,:, -n_heldout:].exp()
-                    hi_co_bps = bits_per_spike(hi_rates, hi_spikes)
-                    ho_co_bps = bits_per_spike(ho_rates, ho_spikes)
-                    hi_lt_co_bps = bits_per_spike(hi_rates[:, -1:, :], hi_spikes[:, -1:, :])
-                    ho_lt_co_bps = bits_per_spike(ho_rates[:, -1:, :], ho_spikes[:, -1:, :])
+                plt.pcolormesh(labels[0,:,:].T.cpu().numpy(), cmap = 'Reds' )
+                plt.tight_layout()
+                plt.savefig(f"images/{model.name}_spks.png")
+                plt.close()
+
+                plt.pcolormesh(rates[0,:,:].T.exp().cpu().numpy(), cmap = 'Reds' )
+                plt.tight_layout()
+                plt.savefig(f"images/{model.name}_rates.png")
+                plt.close()
+
+                plt.pcolormesh(output_saved.T.exp().cpu().numpy(), cmap = 'Reds' )
+                plt.tight_layout()
+                plt.savefig(f"images/{model.name}_output.png")
+                plt.close()
                 
-                    results_dict['val hi_nll'] = hi_nll.mean()
-                    results_dict['val ho_nll'] = ho_nll.mean()
-                    results_dict['val hi_lt_nll'] = hi_lt_nll.mean()
-                    results_dict['val ho_lt_nll'] = ho_lt_nll.mean()
-                    results_dict['val hi_co_bps'] = hi_co_bps
-                    results_dict['val ho_co_bps'] = ho_co_bps
-                    results_dict['val hi_lt_co_bps'] = hi_lt_co_bps
-                    results_dict['val ho_lt_co_bps'] = ho_lt_co_bps
+                pos_emb = pe_saved.T
+                plt.pcolormesh(pos_emb.cpu().numpy(), cmap = 'Reds' )
+                plt.tight_layout()
+                plt.savefig(f"images/{model.name}_pos_emb.png")
+                plt.close()
+
+                pic_dict = {
+                    "rates": wandb.Image(f"images/{model.name}_rates.png"), 
+                    "spikes": wandb.Image(f"images/{model.name}_spks.png"),
+                    "factors": wandb.Image(f"images/{model.name}_facs.png"),
+                    "pos factors": wandb.Image(f"images/{model.name}_pos_facs.png"),
+                    "pos emb": wandb.Image(f"images/{model.name}_pos_emb.png"),
+                    "output": wandb.Image(f"images/{model.name}_output.png")
+                }
+                for idx, readout in enumerate(readouts):
+                    plt.pcolormesh(readouts[readout].weight.cpu().numpy(), cmap = 'Reds' )
+                    plt.tight_layout()
+                    plt.savefig(f"images/{model.name}_readout_{readout}.png")
+                    plt.close()
+                    pic_dict[f"readout_{readout}"] = wandb.Image(f"images/{model.name}_readout_{readout}.png") 
+
+                    plt.pcolormesh(readouts[readout].bias.unsqueeze(1).cpu().numpy(), cmap = 'Reds' )
+                    plt.tight_layout()
+                    plt.savefig(f"images/{model.name}_readout_{readout}_bias.png")
+                    plt.close()
+                    pic_dict[f"readout_{readout}_bias"] = wandb.Image(f"images/{model.name}_readout_{readout}_bias.png") 
+
+                wandb.log(pic_dict)
+
+
+
+                # if model.has_heldout:
+                #     n_heldout = ho_spikes.shape[-1]
+
+                #     hi_nll = loss[:,:, :-n_heldout]
+                #     ho_nll = loss[:,:, -n_heldout:]
+                #     hi_lt_nll = loss[:,-1, :-n_heldout]
+                #     ho_lt_nll = loss[:,-1, -n_heldout:]
+
+                #     hi_rates = rates[:,:, :-n_heldout].exp()
+                #     ho_rates = rates[:,:, -n_heldout:].exp()
+                #     hi_co_bps = bits_per_spike(hi_rates, hi_spikes)
+                #     ho_co_bps = bits_per_spike(ho_rates, ho_spikes)
+                #     hi_lt_co_bps = bits_per_spike(hi_rates[:, -1:, :], hi_spikes[:, -1:, :])
+                #     ho_lt_co_bps = bits_per_spike(ho_rates[:, -1:, :], ho_spikes[:, -1:, :])
+                
+                #     results_dict['val hi_nll'] = hi_nll.mean()
+                #     results_dict['val ho_nll'] = ho_nll.mean()
+                #     results_dict['val hi_lt_nll'] = hi_lt_nll.mean()
+                #     results_dict['val ho_lt_nll'] = ho_lt_nll.mean()
+                #     results_dict['val hi_co_bps'] = hi_co_bps
+                #     results_dict['val ho_co_bps'] = ho_co_bps
+                #     results_dict['val hi_lt_co_bps'] = hi_lt_co_bps
+                #     results_dict['val ho_lt_co_bps'] = ho_lt_co_bps
 
                 results_dict['val nll'] = loss.mean()
                 results_dict['val lt_nll'] = loss[:, -1:, :].mean()

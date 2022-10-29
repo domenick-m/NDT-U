@@ -1,7 +1,7 @@
 from data.t5_dataset import T5CursorDataset
 import numpy as np
 import copy
-
+import pandas as pd
 
 datasets = {}
 
@@ -53,7 +53,7 @@ def get_trial_data(config, smth_list=None, max_lag=None):
     populate_datasets(config)
     lag = config.data.lag if max_lag == None else max_lag
 
-    def trials_from_list(block_list):
+    def trials_from_list(session_list):
         ''' Helper function to take in list from config and return dict
         '''
         trials = {}
@@ -89,7 +89,9 @@ def get_trial_data(config, smth_list=None, max_lag=None):
                 for tr_id, trial in trial_data[block_mask].groupby('trial_id'):
                     trials[session][control][block][tr_id] = trial
 
-        for session, ol_blocks, cl_blocks in block_list:
+        session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
+
+        for session in block_list:
             trials[session] = {}
 
             dataset = datasets[session]
@@ -108,7 +110,7 @@ def get_trial_data(config, smth_list=None, max_lag=None):
 
         return trials
 
-    train_trials = trials_from_list(config.data.train)
+    train_trials = trials_from_list(config.data.pretrain_sessions)
     # test_trials = trials_from_list(config.data.test)
 
     # return train_trials, test_trials

@@ -66,11 +66,78 @@ def smooth_spikes(data, gauss_width, bin_width, causal):
     filt = lambda x: np.convolve(x, window, 'same')
     return np.apply_along_axis(filt, 0, data)
 
+def get_testing_data(config):
+    ''' Get spikes to train NDT with
+    '''
+    # Cache datasets for later use
+    populate_datasets(config)
+
+    trials_dict = {}
+
+    session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
+    trials = {}
+    chopped_spikes, session_names = [], []
+    for session in config.data.pretrain_sessions:
+        dataset = copy.deepcopy(datasets[session]) # do not want to run xcorr on test data
+
+        session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
+
+        if config.data.rem_xcorr: 
+            dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
+
+        dataset.resample(config.data.bin_size / 1000)
+        # dataset.smooth_spk(config.data.smth_std, name='smth')
+
+        failed_trials = ~dataset.trial_info['is_successful'] 
+        center_trials = dataset.trial_info['is_center_target']
+        ol_block = session_csv.loc[session_csv['session_id'] == session, 'ol_blocks'].item() # cl = [int(i) for i in session_csv.loc[session_csv['session_id'] == session, 'cl_blocks'].item().split(' ')]
+        cl_blocks =  ~dataset.trial_info['block_num'].isin([ol_block]).values.squeeze()
+        
+        trial_data = dataset.make_trial_data(
+            align_field='start_time',
+            align_range=(
+                0,
+                # -config.data.seq_len * config.data.bin_size + config.data.bin_size, # start align
+                config.data.trial_len + config.data.lag
+                # 0, config.data.trial_len
+            ),
+            allow_overlap=True,
+            ignored_trials=failed_trials | center_trials | cl_blocks
+        )
+
+        trial_data.sort_index(axis=1, inplace=True)
+        trial_data['X&Y'] = list(zip(trial_data['targetPos']['x'], trial_data['targetPos']['y']))
+        trial_data['condition'] = 0
+
+        for xy, id in list(zip(trial_data['X&Y'].unique(), np.arange(1,9))):
+            indices = trial_data.index[trial_data['X&Y'] == xy]
+            trial_data.loc[indices, 'condition'] = id
+
+        n_channels = trial_data.spikes.shape[-1]
+
+        n_heldout = int(config.data.heldout_pct * n_channels)
+        np.random.seed(config.setup.seed)
+        heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
+        heldin_channels = torch.ones(n_channels, dtype=bool)
+        heldin_channels[heldout_channels] = False
+        print(heldout_channels)
+
+        trials_dict[session] = {}
+        for cond_id, trials in trial_data.groupby('condition'):
+            trial_list = []
+            for trial_id, trial in trials.groupby('trial_id'):
+                trial_list.append(trial.spikes.to_numpy()[:, heldin_channels])
+            trials_dict[session][cond_id] = trial_list
+
+    return trials_dict
+    
 def get_pretraining_data(config):
     ''' Get spikes to train NDT with
     '''
     # Cache datasets for later use
     populate_datasets(config)
+
+    session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
 
     chopped_spikes, session_names = [], []
     for session in config.data.pretrain_sessions:
@@ -82,8 +149,10 @@ def get_pretraining_data(config):
         dataset.resample(config.data.bin_size / 1000) # convert ms to sec
 
         block_spikes = []
+        ol_block = session_csv.loc[session_csv['session_id'] == session, 'ol_blocks'].item()
         for block_num, block in dataset.data.groupby(('blockNums', 'n')):
-            block_spikes.append(chop(block.spikes.to_numpy(), config.data.seq_len, config.data.overlap))
+            if block_num == ol_block:
+                block_spikes.append(chop(block.spikes.to_numpy(), config.data.seq_len, config.data.overlap))
         spikes = np.concatenate(block_spikes, 0)
 
         names = [session for i in range(spikes.shape[0])]
@@ -119,6 +188,10 @@ def get_alignment_matricies(config):
 
     for session in config.data.pretrain_sessions:
         dataset = copy.deepcopy(datasets[session])
+
+        if config.data.rem_xcorr: 
+            dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
+
         dataset.resample(config.data.bin_size / 1000)
         dataset.smooth_spk(config.data.smth_std, name='smth')
 
@@ -142,18 +215,35 @@ def get_alignment_matricies(config):
             indices = trial_data.index[trial_data['X&Y'] == xy]
             trial_data.loc[indices, 'condition'] = id
 
+        n_channels = trial_data.spikes.shape[-1]
+
+        n_heldout = int(config.data.heldout_pct * n_channels)
+        np.random.seed(config.setup.seed)
+        heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
+        heldin_channels = torch.ones(n_channels, dtype=bool)
+        heldin_channels[heldout_channels] = False
+        print(heldout_channels)
+
         avg_conds[session] = []
         trials_dict[session] = {}
         for cond_id, trials in trial_data.groupby('condition'):
             trial_list = []
             smth_trial_list = []
             for trial_id, trial in trials.groupby('trial_id'):
-                trial_list.append(trial.spikes.to_numpy())
-                smth_trial_list.append(trial.spikes_smth.to_numpy())
+                trial_list.append(trial.spikes.to_numpy()[:, heldin_channels])
+                # all_ch = np.concatenate((trial.spikes.to_numpy()[:, heldin_channels], np.zeros_like(trial.spikes.to_numpy()[:, heldout_channels])), -1)
+                # trial_list.append(all_ch)
+                smth_trial_list.append(trial.spikes_smth.to_numpy()[:, heldin_channels])
+                # all_ch_smth = np.concatenate((trial.spikes_smth.to_numpy()[:, heldin_channels], np.zeros_like(trial.spikes_smth.to_numpy()[:, heldout_channels])), -1)
+                # smth_trial_list.append(all_ch_smth)
             trials_dict[session][cond_id] = trial_list
             avg_conds[session].append(np.mean(smth_trial_list, 0))
 
     session_list = list(avg_conds.keys())
+
+    if config.model.rand_readin_init:
+        return None, None, session_list
+
     avg_cond_arr = np.array(list(avg_conds.values())) # (days, conds, bins, chans)
     avg_cond_arr = avg_cond_arr.transpose((3, 0, 1, 2)) # -> (chans, days, conds, bins)
     nchans, ndays, nconds, nbins = avg_cond_arr.shape
@@ -188,7 +278,6 @@ def get_alignment_matricies(config):
         alignment_biases.append(torch.from_numpy(bias.astype(np.float32)))
 
     return alignment_matrices, alignment_biases, session_list
-
 
     
 

@@ -848,11 +848,7 @@ def print_train_configs(config, args):
     train_list = [
         train_box[0], train_box[1], train_box[2],
         format_config('batch_size', config.train.batch_size),
-        format_config('e_batch_size', config.train.e_batch_size),
         format_config('epochs', config.train.epochs),
-        format_config('seq_len', config.train.seq_len),
-        format_config('overlap', config.train.overlap),
-        format_config('lag', config.train.lag),
         format_config('val_type', config.train.val_type),
         format_config('n_folds', config.train.n_folds),
         format_config('early_stopping', config.train.early_stopping),
