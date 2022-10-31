@@ -1,6 +1,8 @@
 /runs
 /wandb/*
-/data
+/data/*.csv
+/data/*.h5
+/data/*.mat
 /images
 /plots
 */__pycache__
