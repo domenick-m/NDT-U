@@ -169,32 +169,6 @@ class Encoder(Module):
             src = self.norm(src)
         return src
 
-class PositionalEncoding(nn.Module):
-    r"""
-    ! FYI - needs even d_model if not learned.
-    """
-    def __init__(self, cfg, trial_length, d_model, device):
-        super().__init__()
-        self.dropout = nn.Dropout(p=cfg['model']['dropout_embedding'])
-        pe = torch.zeros(trial_length, d_model).to(device) # * Can optim to empty
-        position = torch.arange(0, trial_length, dtype=torch.float).unsqueeze(1)
-        self.learnable = True
-        if self.learnable:
-            self.register_buffer('pe', position.long())
-            self.pos_embedding = nn.Embedding(trial_length, d_model) # So maybe it's here...?
-        
-
-    def update_config(self, config):
-        self.dropout = nn.Dropout(config['model']['dropout_embedding'])
-
-    def forward(self, x):
-        if self.learnable:
-            x = x + self.pos_embedding(self.pe) # t x 1 x d
-        else:
-            x = x + self.pe[:x.size(0), :] # t x 1 x d, # t x b x d
-        return self.dropout(x)
-
-
 class Transformer(Module):
     '''Simplified version of Joel Ye's NDT with unvdivided attention added.
     (https://github.com/snel-repo/neural-data-transformers)
@@ -249,41 +223,26 @@ class Transformer(Module):
         self.rate_dropout = nn.Dropout(config['model']['dropout_rates'])
         self.embedding_dropout = nn.Dropout(p=config['model']['dropout_embedding'])
 
-        # pe = torch.zeros(self.seq_len, 32)
-        # for i in range(32):
-        #     pe[:, i] = torch.from_numpy(np.linspace(0,1,num=self.seq_len))
-        # pe = pe.unsqueeze(0).transpose(0, 1)
-        # self.pos_embedding = Parameter(pe)
 
-        pe = torch.zeros(self.seq_len, self.factor_dim)
-        # for i in range(self.factor_dim):
-        #     pe[:, i] = torch.from_numpy(np.linspace(0,1,num=self.seq_len))
-        position = torch.arange(0, self.seq_len, dtype=torch.float).unsqueeze(1)
-        self.register_buffer('pe', position.long())
-        self.pos_embedding = nn.Embedding(self.seq_len, self.factor_dim)
-        # pe = pe.unsqueeze(0).transpose(0, 1)
-        # self.pos_embedding = Parameter(pe)
+        if not config.model.cat_pos_emb:
+            pe = torch.zeros(self.seq_len, self.factor_dim)
+            position = torch.arange(0, self.seq_len, dtype=torch.float).unsqueeze(1)
+            self.register_buffer('pe', position.long())
+            self.pos_embedding = nn.Embedding(self.seq_len, self.factor_dim)
 
-        # pe = torch.zeros(self.seq_len, 32)
-        # position = torch.arange(0, self.seq_len, dtype=torch.float).unsqueeze(1)
-        # div_term = torch.exp(torch.arange(0, 32, 2).float() * (-math.log(10000.0) / (32)))
-        # pe[:, 0::2] = torch.sin(position * div_term)
-        # pe[:, 1::2] = torch.cos(position * div_term)
-        # pe = pe.unsqueeze(0).transpose(0, 1) # t x 1 x d
-        # self.register_buffer('pe', pe)
-        # self.pos_embedding = Parameter(self.pe)
+            encoder_layer = EncoderLayer(config, self.factor_dim, self.seq_len)
+            self.encoder = Encoder(config, self.factor_dim, encoder_layer, self.seq_len)
+        else:
+            pe = torch.zeros(self.seq_len, config.model.pos_emb_size)
+            pe = pe.unsqueeze(0).transpose(0, 1) # t x 1 x d
+            self.register_buffer('pe', pe)
+            self.pos_embedding = Parameter(self.pe)
 
-        # pe = torch.zeros(self.seq_len, self.factor_dim)
-        # position = torch.arange(0, self.seq_len, dtype=torch.float).unsqueeze(1)
-        # div_term = torch.exp(torch.arange(0, self.factor_dim, 2).float() * (-math.log(10000.0) / (self.factor_dim)))
-        # pe[:, 0::2] = torch.sin(position * div_term)
-        # pe[:, 1::2] = torch.cos(position * div_term)
-        # pe = pe.unsqueeze(0).transpose(0, 1) # t x 1 x d
-        # self.register_buffer('pe', pe)
-        # self.pos_embedding = Parameter(self.pe)
+            encoder_layer = EncoderLayer(config, self.factor_dim + config.model.pos_emb_size, self.seq_len)
+            self.encoder = Encoder(config, self.factor_dim + config.model.pos_emb_size, encoder_layer, self.seq_len)
+        
 
-        encoder_layer = EncoderLayer(config, self.factor_dim, self.seq_len)
-        self.encoder = Encoder(config, self.factor_dim, encoder_layer, self.seq_len)
+        
         # encoder_layer = EncoderLayer(config, self.factor_dim + 32, self.seq_len)
         # self.encoder = Encoder(config, self.factor_dim + 32, encoder_layer, self.seq_len)
 
@@ -303,7 +262,10 @@ class Transformer(Module):
             self.readin[session] = self.readin[session].to(device)
 
             # self.readout[session] = nn.Linear(self.factor_dim, self.n_heldin if self.has_heldout else self.n_channels)
-            self.readout[session] = nn.Linear(self.factor_dim, self.n_channels)
+            if self.config.model.cat_pos_emb:
+                self.readout[session] = nn.Linear(self.factor_dim + config.model.pos_emb_size, self.n_channels)
+            else:
+                self.readout[session] = nn.Linear(self.factor_dim, self.n_channels)
             # if not config.model.rand_readout_init:
             #     self.readout[session].weight = torch.nn.Parameter(matrices[idx].T)
             #     bias = torch.matmul(biases[idx] * -1, matrices[idx])
@@ -355,14 +317,19 @@ class Transformer(Module):
             if 0 in indices:
                 factors_saved = factors[0, :, :].clone()
                 # pe_saved = self.pos_embedding.flip(2)[:, 0, :].clone()
-                pe_saved = self.pos_embedding(self.pe)[:, 0, :].clone()
-                # pe_saved = self.pos_embedding[:, 0, :].clone()
+                if not self.config.model.cat_pos_emb:
+                    pe_saved = self.pos_embedding(self.pe)[:, 0, :].clone()
+                else:
+                    pe_saved = self.pos_embedding[:, 0, :].clone()
 
-            factors = factors.permute(1, 0, 2) * self.scale # [B x T x N] -> [T x B x N]
-            # factors += self.pos_embedding.flip(2)
-            # factors += self.pos_embedding
-            factors += self.pos_embedding(self.pe)
-            # factors = torch.cat((factors, self.pos_embedding.repeat(1, factors.shape[1], 1)), -1)
+            factors = factors.permute(1, 0, 2) # [B x T x N] -> [T x B x N]
+            if self.config.model.scale_input:
+                factors *= self.scale
+
+            if self.config.model.cat_pos_emb:
+                factors = torch.cat((factors, self.pos_embedding.repeat(1, factors.shape[1], 1)), -1)
+            else:
+                factors += self.pos_embedding(self.pe)
             
             if 0 in indices:
                 pe_factors_saved = factors[:, 0, :].clone()
@@ -446,7 +413,8 @@ class Transformer(Module):
             loss_mask = expanded_mask.squeeze(1)
 
         loss_mask = loss_mask.bool().unsqueeze(2).expand_as(labels)
-        # loss_mask[:, -1, :] = True
+        if self.config['train']['always_lt_loss']:
+            loss_mask[:, -1, :] = True
         labels[~loss_mask] = -100
 
         # Zero mask
@@ -467,10 +435,10 @@ class Transformer(Module):
         batch[indices_randomized] = random_spikes.float()[indices_randomized]
 
         # Add 0 masked heldout if needed
-        # if self.has_heldout:
+        if self.has_heldout:
             # if self.zeros is None or self.zeros != heldout_spikes.size():
             #     self.zeros = torch.zeros_like(heldout_spikes)
             # batch = torch.cat([batch, self.zeros], -1)
-            # labels = torch.cat([labels, heldout_spikes], -1)
+            labels = torch.cat([labels, heldout_spikes], -1)
 
         return batch, labels

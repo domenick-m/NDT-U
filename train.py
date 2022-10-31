@@ -62,7 +62,7 @@ import subprocess
 
 import matplotlib.pyplot as plt
 import numpy as np
-from test import test
+from test import test_func
 
 from utils.data.create_local_t5data import get_trial_data
 
@@ -153,7 +153,7 @@ def run_training(config, device, name):
 
     model = Transformer(config, dataset, name, device).to(device)
     train(model, train_dataloader, val_dataloader, device)
-    test(config, model)
+    test_func(config, model)
 
     # wandb_cleanup()
     torch.cuda.empty_cache()
@@ -321,8 +321,8 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
                 labels = spikes.clone()
                 hi_spikes = spikes.clone()
                 
-                # if model.has_heldout:
-                #     labels = torch.cat([labels, ho_spikes], -1)
+                if model.has_heldout:
+                    labels = torch.cat([labels, ho_spikes], -1)
 
                 # with torch.cuda.amp.autocast():
                 loss, rates, factors_saved, pe_saved, pe_factors_saved, output_saved, readouts = model(spikes, names, labels)
@@ -383,29 +383,29 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
 
 
 
-                # if model.has_heldout:
-                #     n_heldout = ho_spikes.shape[-1]
+                if model.has_heldout:
+                    n_heldout = ho_spikes.shape[-1]
 
-                #     hi_nll = loss[:,:, :-n_heldout]
-                #     ho_nll = loss[:,:, -n_heldout:]
-                #     hi_lt_nll = loss[:,-1, :-n_heldout]
-                #     ho_lt_nll = loss[:,-1, -n_heldout:]
+                    hi_nll = loss[:,:, :-n_heldout]
+                    ho_nll = loss[:,:, -n_heldout:]
+                    hi_lt_nll = loss[:,-1, :-n_heldout]
+                    ho_lt_nll = loss[:,-1, -n_heldout:]
 
-                #     hi_rates = rates[:,:, :-n_heldout].exp()
-                #     ho_rates = rates[:,:, -n_heldout:].exp()
-                #     hi_co_bps = bits_per_spike(hi_rates, hi_spikes)
-                #     ho_co_bps = bits_per_spike(ho_rates, ho_spikes)
-                #     hi_lt_co_bps = bits_per_spike(hi_rates[:, -1:, :], hi_spikes[:, -1:, :])
-                #     ho_lt_co_bps = bits_per_spike(ho_rates[:, -1:, :], ho_spikes[:, -1:, :])
+                    hi_rates = rates[:,:, :-n_heldout].exp()
+                    ho_rates = rates[:,:, -n_heldout:].exp()
+                    hi_co_bps = bits_per_spike(hi_rates, hi_spikes)
+                    ho_co_bps = bits_per_spike(ho_rates, ho_spikes)
+                    hi_lt_co_bps = bits_per_spike(hi_rates[:, -1:, :], hi_spikes[:, -1:, :])
+                    ho_lt_co_bps = bits_per_spike(ho_rates[:, -1:, :], ho_spikes[:, -1:, :])
                 
-                #     results_dict['val hi_nll'] = hi_nll.mean()
-                #     results_dict['val ho_nll'] = ho_nll.mean()
-                #     results_dict['val hi_lt_nll'] = hi_lt_nll.mean()
-                #     results_dict['val ho_lt_nll'] = ho_lt_nll.mean()
-                #     results_dict['val hi_co_bps'] = hi_co_bps
-                #     results_dict['val ho_co_bps'] = ho_co_bps
-                #     results_dict['val hi_lt_co_bps'] = hi_lt_co_bps
-                #     results_dict['val ho_lt_co_bps'] = ho_lt_co_bps
+                    results_dict['val hi_nll'] = hi_nll.mean()
+                    results_dict['val ho_nll'] = ho_nll.mean()
+                    results_dict['val hi_lt_nll'] = hi_lt_nll.mean()
+                    results_dict['val ho_lt_nll'] = ho_lt_nll.mean()
+                    results_dict['val hi_co_bps'] = hi_co_bps
+                    results_dict['val ho_co_bps'] = ho_co_bps
+                    results_dict['val hi_lt_co_bps'] = hi_lt_co_bps
+                    results_dict['val ho_lt_co_bps'] = ho_lt_co_bps
 
                 results_dict['val nll'] = loss.mean()
                 results_dict['val lt_nll'] = loss[:, -1:, :].mean()
