@@ -70,7 +70,7 @@ config.data.smth_std = 60   # ms std to smooth rates by when decoding
 config.data.center_trials = False   # Should return (center target) trials be used in test evaluation
 config.data.trial_len = 2000   # ms after 'start_time' that a trial should span for test evaluation
 
-config.data.rem_xcorr = False   # Whether or not correlated channels should be removed.
+config.data.rem_xcorr = True   # Whether or not correlated channels should be removed.
 config.data.heldout_pct = 0.25   # What percentage of channels should be heldout
 
 
@@ -97,7 +97,7 @@ config.train.es_patience = 500
 
 config.train.lt_loss_only = False
 config.train.always_lt_loss = False
-config.train.init_lr = 0.1   # The initial learning rate to be used by the optimizer
+config.train.init_lr = 0.01   # The initial learning rate to be used by the optimizer
 config.train.max_grad_norm = 200.0   # The max gradient before value is clipped
 config.train.optimizer = 'AdamW'   # ['AdamW',] The optimizer to use
 config.train.weight_decay = 5.0e-05   # The weight decay value used by AdamW, kind of like L2 Reg but better
@@ -114,27 +114,27 @@ config.train.ramp_end = 12000 # Epoch when the expand prob remains at mask_max_s
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
 config.model = CN()
-config.model.n_heads = 4 # The number of heads used in UndividedMultiheadAttention
+config.model.n_heads = 2 # The number of heads used in UndividedMultiheadAttention
 config.model.undivided_attn = True 
-config.model.n_layers = 8 # The number of EncoderLayers the Encoder should have
-config.model.factor_dim = 64 # Dimensions that NDT will use after readin / before readout
-config.model.hidden_size = 512 # The size of the linear layers in each EncoderLayer
+config.model.n_layers = 4 # The number of EncoderLayers the Encoder should have
+config.model.factor_dim = 128 # Dimensions that NDT will use after readin / before readout
+config.model.hidden_size = 256 # The size of the linear layers in each EncoderLayer
 
 config.model.freeze_readin = False # The size of the linear layers in each EncoderLayer
-config.model.rand_readin_init = False # The size of the linear layers in each EncoderLayer
+config.model.rand_readin_init = True # The size of the linear layers in each EncoderLayer
 
-config.model.cat_pos_emb = True
+config.model.cat_pos_emb = False
 config.model.pos_emb_size = 32 
-config.model.scale_input = False
+config.model.scale_input = True
 
 config.model.norm = 'layer' # ['layer', 'scale'] The normalization to be used in the EncoderLayers
 config.model.gnorm_groups = 10 # ['layer', 'scale'] The normalization to be used in the EncoderLayers
 config.model.activation = 'relu' # ['relu', 'gelu']
 
 config.model.dropout = 0.4 # Overall dropout, used in EncoderLayer
-config.model.dropout_rates = 0.5 # Dropout of model output (rates)
+config.model.dropout_rates = 0.7 # Dropout of model output (rates)
 config.model.dropout_embedding = 0.5 # Dropout applied after pos_embedding is added
-config.model.dropout_attention = 0.4 # Dropout applied to the attention matrix in UndividedMultiheadAttention
+config.model.dropout_attention = 0.6 # Dropout applied to the attention matrix in UndividedMultiheadAttention
 
 config.model.normal_init = False
 config.model.initrange = 0.1 # The range that should be used on the normal init of the decoder
@@ -143,8 +143,8 @@ config.model.loss_ratio = 0.25 # Percentage of tokens that loss is computed with
 config.model.mask_ratio = 0.75 # Percentage of tokens being used to compute the loss are zero masked
 config.model.random_ratio = 1.0 # Percentage of unmasked tokens loss is computed with that should be randomized
 
-config.model.context_forward = 12 # How many timesteps in the future can a timestep attend to
-config.model.context_backward = 12 # How many timesteps in the past can a timestep attend to
+config.model.context_forward = 30 # How many timesteps in the future can a timestep attend to
+config.model.context_backward = 30 # How many timesteps in the past can a timestep attend to
 
 '''
    ╔════════════════════════════════════════════════════════════════════════╗

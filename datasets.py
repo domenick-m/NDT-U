@@ -32,6 +32,7 @@ from data.t5_dataset import T5CursorDataset
 from sklearn.decomposition import PCA
 from sklearn.linear_model import Ridge
 
+from sklearn.preprocessing import StandardScaler
 
 
 
@@ -72,27 +73,62 @@ def get_testing_data(config):
     # Cache datasets for later use
     populate_datasets(config)
 
+    return datasets
+
     trials_dict = {}
+    mean_dict = {}
+    std_dict = {}
+    scaler_dict = {}
+    heldin_dict = {}
+    heldout_dict = {}
+    corr_chan_dict = {}
 
     session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
     trials = {}
     chopped_spikes, session_names = [], []
     for session in config.data.pretrain_sessions:
+        scaler_dict[session] = []
         dataset = copy.deepcopy(datasets[session]) # do not want to run xcorr on test data
 
         session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
 
+        corr_chan_dict[session]=[]
         if config.data.rem_xcorr: 
-            dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
+            corr_chan_dict[session] = dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)[1]
 
         dataset.resample(config.data.bin_size / 1000)
-        # dataset.smooth_spk(config.data.smth_std, name='smth')
+        dataset.smooth_spk(20, name='smth')
 
         failed_trials = ~dataset.trial_info['is_successful'] 
         center_trials = dataset.trial_info['is_center_target']
         ol_block = session_csv.loc[session_csv['session_id'] == session, 'ol_blocks'].item() # cl = [int(i) for i in session_csv.loc[session_csv['session_id'] == session, 'cl_blocks'].item().split(' ')]
         cl_blocks =  ~dataset.trial_info['block_num'].isin([ol_block]).values.squeeze()
+
+        spks = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.index
+        spks_idx = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes
+
+        n_channels = dataset.data.spikes.shape[-1]
+
+        n_heldout = int(config.data.heldout_pct * n_channels)
+        np.random.seed(config.setup.seed)
+        heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
+        heldin_channels = torch.ones(n_channels, dtype=bool)
+        heldin_channels[heldout_channels] = False
+        heldin_dict[session] = heldin_channels
+        heldout_dict[session] = heldout_channels
         
+        mean_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes_smth.mean(0)
+        std_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes_smth.std(0)
+        # mean_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.mean(0)
+        # std_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.std(0)
+        data = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes_smth.to_numpy()
+        # data = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.to_numpy()
+        
+        # for row in range(data.shape[1]):
+        #     temp = StandardScaler()
+        #     temp.fit(data[:, row].reshape(-1, 1))
+        #     scaler_dict[session].append(temp)
+
         trial_data = dataset.make_trial_data(
             align_field='start_time',
             align_range=(
@@ -113,14 +149,6 @@ def get_testing_data(config):
             indices = trial_data.index[trial_data['X&Y'] == xy]
             trial_data.loc[indices, 'condition'] = id
 
-        n_channels = trial_data.spikes.shape[-1]
-
-        n_heldout = int(config.data.heldout_pct * n_channels)
-        np.random.seed(config.setup.seed)
-        heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
-        heldin_channels = torch.ones(n_channels, dtype=bool)
-        heldin_channels[heldout_channels] = False
-        print(heldout_channels)
 
         trials_dict[session] = {}
         for cond_id, trials in trial_data.groupby('condition'):
@@ -129,7 +157,187 @@ def get_testing_data(config):
                 trial_list.append(trial.spikes.to_numpy()[:, heldin_channels])
             trials_dict[session][cond_id] = trial_list
 
-    return trials_dict
+    return trials_dict, datasets
+    # return trials_dict, mean_dict, std_dict, scaler_dict, heldin_dict, heldout_dict, corr_chan_dict
+
+# def get_testing_data(config):
+#     ''' Get spikes to train NDT with
+#     '''
+#     # Cache datasets for later use
+#     populate_datasets(config)
+
+#     trials_dict = {}
+#     mean_dict = {}
+#     std_dict = {}
+#     scaler_dict = {}
+#     heldin_dict = {}
+#     heldout_dict = {}
+#     corr_chan_dict = {}
+
+#     session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
+#     trials = {}
+#     chopped_spikes, session_names = [], []
+#     for session in config.data.pretrain_sessions:
+#         scaler_dict[session] = []
+#         dataset = copy.deepcopy(datasets[session]) # do not want to run xcorr on test data
+
+#         session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
+
+#         corr_chan_dict[session]=[]
+#         if config.data.rem_xcorr: 
+#             corr_chan_dict[session] = dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)[1]
+
+#         dataset.resample(config.data.bin_size / 1000)
+#         dataset.smooth_spk(20, name='smth')
+
+#         failed_trials = ~dataset.trial_info['is_successful'] 
+#         center_trials = dataset.trial_info['is_center_target']
+#         ol_block = session_csv.loc[session_csv['session_id'] == session, 'ol_blocks'].item() # cl = [int(i) for i in session_csv.loc[session_csv['session_id'] == session, 'cl_blocks'].item().split(' ')]
+#         cl_blocks =  ~dataset.trial_info['block_num'].isin([ol_block]).values.squeeze()
+
+#         spks = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.index
+#         spks_idx = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes
+
+#         n_channels = dataset.data.spikes.shape[-1]
+
+#         n_heldout = int(config.data.heldout_pct * n_channels)
+#         np.random.seed(config.setup.seed)
+#         heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
+#         heldin_channels = torch.ones(n_channels, dtype=bool)
+#         heldin_channels[heldout_channels] = False
+#         print(heldout_channels)
+#         heldin_dict[session] = heldin_channels
+#         heldout_dict[session] = heldout_channels
+        
+#         mean_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes_smth.mean(0)
+#         std_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes_smth.std(0)
+#         # mean_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.mean(0)
+#         # std_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.std(0)
+#         data = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes_smth.to_numpy()
+#         # data = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.to_numpy()
+        
+#         # for row in range(data.shape[1]):
+#         #     temp = StandardScaler()
+#         #     temp.fit(data[:, row].reshape(-1, 1))
+#         #     scaler_dict[session].append(temp)
+
+#         trial_data = dataset.make_trial_data(
+#             align_field='start_time',
+#             align_range=(
+#                 0,
+#                 # -config.data.seq_len * config.data.bin_size + config.data.bin_size, # start align
+#                 config.data.trial_len + config.data.lag
+#                 # 0, config.data.trial_len
+#             ),
+#             allow_overlap=True,
+#             ignored_trials=failed_trials | center_trials | cl_blocks
+#         )
+
+#         trial_data.sort_index(axis=1, inplace=True)
+#         trial_data['X&Y'] = list(zip(trial_data['targetPos']['x'], trial_data['targetPos']['y']))
+#         trial_data['condition'] = 0
+
+#         for xy, id in list(zip(trial_data['X&Y'].unique(), np.arange(1,9))):
+#             indices = trial_data.index[trial_data['X&Y'] == xy]
+#             trial_data.loc[indices, 'condition'] = id
+
+
+#         trials_dict[session] = {}
+#         for cond_id, trials in trial_data.groupby('condition'):
+#             trial_list = []
+#             for trial_id, trial in trials.groupby('trial_id'):
+#                 trial_list.append(trial.spikes.to_numpy()[:, heldin_channels])
+#             trials_dict[session][cond_id] = trial_list
+
+#     return trials_dict, mean_dict, std_dict, scaler_dict, heldin_dict, heldout_dict, corr_chan_dict
+    
+# def get_testing_data(config):
+#     ''' Get spikes to train NDT with
+#     '''
+#     # Cache datasets for later use
+#     populate_datasets(config)
+
+#     trials_dict = {}
+#     mean_dict = {}
+#     std_dict = {}
+#     scaler_dict = {}
+#     heldin_dict = {}
+#     heldout_dict = {}
+#     corr_chan_dict = {}
+
+#     session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
+#     trials = {}
+#     chopped_spikes, session_names = [], []
+#     for session in config.data.pretrain_sessions:
+#         scaler_dict[session] = []
+#         dataset = copy.deepcopy(datasets[session]) # do not want to run xcorr on test data
+
+#         session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
+
+#         corr_chan_dict[session]=[]
+#         if config.data.rem_xcorr: 
+#             corr_chan_dict[session] = dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)[1]
+
+#         dataset.resample(config.data.bin_size / 1000)
+#         dataset.smooth_spk(20, name='smth')
+
+#         failed_trials = ~dataset.trial_info['is_successful'] 
+#         center_trials = dataset.trial_info['is_center_target']
+#         ol_block = session_csv.loc[session_csv['session_id'] == session, 'ol_blocks'].item() # cl = [int(i) for i in session_csv.loc[session_csv['session_id'] == session, 'cl_blocks'].item().split(' ')]
+#         cl_blocks =  ~dataset.trial_info['block_num'].isin([ol_block]).values.squeeze()
+
+#         n_channels = dataset.data.spikes.shape[-1]
+
+#         n_heldout = int(config.data.heldout_pct * n_channels)
+#         np.random.seed(config.setup.seed)
+#         heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
+#         heldin_channels = torch.ones(n_channels, dtype=bool)
+#         heldin_channels[heldout_channels] = False
+#         print(heldout_channels)
+#         heldin_dict[session] = heldin_channels
+#         heldout_dict[session] = heldout_channels
+        
+#         mean_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes_smth.mean(0)
+#         std_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes_smth.std(0)
+#         # mean_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.mean(0)
+#         # std_dict[session] = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.std(0)
+#         data = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes_smth.to_numpy()
+#         # data = dataset.data[dataset.data['blockNums'].isin([ol_block]).values.squeeze()].spikes.to_numpy()
+        
+#         # for row in range(data.shape[1]):
+#         #     temp = StandardScaler()
+#         #     temp.fit(data[:, row].reshape(-1, 1))
+#         #     scaler_dict[session].append(temp)
+
+#         trial_data = dataset.make_trial_data(
+#             align_field='start_time',
+#             align_range=(
+#                 0,
+#                 # -config.data.seq_len * config.data.bin_size + config.data.bin_size, # start align
+#                 config.data.trial_len + config.data.lag
+#                 # 0, config.data.trial_len
+#             ),
+#             allow_overlap=True,
+#             ignored_trials=failed_trials | center_trials | cl_blocks
+#         )
+
+#         trial_data.sort_index(axis=1, inplace=True)
+#         trial_data['X&Y'] = list(zip(trial_data['targetPos']['x'], trial_data['targetPos']['y']))
+#         trial_data['condition'] = 0
+
+#         for xy, id in list(zip(trial_data['X&Y'].unique(), np.arange(1,9))):
+#             indices = trial_data.index[trial_data['X&Y'] == xy]
+#             trial_data.loc[indices, 'condition'] = id
+
+
+#         trials_dict[session] = {}
+#         for cond_id, trials in trial_data.groupby('condition'):
+#             trial_list = []
+#             for trial_id, trial in trials.groupby('trial_id'):
+#                 trial_list.append(trial.spikes.to_numpy()[:, heldin_channels])
+#             trials_dict[session][cond_id] = trial_list
+
+#     return trials_dict, mean_dict, std_dict, scaler_dict, heldin_dict, heldout_dict, corr_chan_dict
     
 def get_pretraining_data(config):
     ''' Get spikes to train NDT with
@@ -144,7 +352,7 @@ def get_pretraining_data(config):
         dataset = copy.deepcopy(datasets[session]) # do not want to run xcorr on test data
 
         if config.data.rem_xcorr: 
-            dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
+            pair_corr, chan_names_to_drop = dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
 
         dataset.resample(config.data.bin_size / 1000) # convert ms to sec
 
@@ -159,7 +367,7 @@ def get_pretraining_data(config):
 
         chopped_spikes.append(torch.from_numpy(spikes.astype(np.float32)))
         session_names.append(names)
-
+    print(torch.cat(chopped_spikes, 0).shape)
     return torch.cat(chopped_spikes, 0), np.concatenate(session_names, 0)
     # Should this be removed ^^
 
@@ -279,7 +487,6 @@ def get_alignment_matricies(config):
 
     return alignment_matrices, alignment_biases, session_list
 
-    
 
 class Dataset(data.Dataset):
     def __init__(self, config):

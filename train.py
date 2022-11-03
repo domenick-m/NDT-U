@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Author: Domenick Mifsud
 #───────#
-from test_eval import test_eval
+# from test_eval import test_eval
 from timeit import default_timer as timer
 import os
 # import gc
