@@ -223,9 +223,9 @@ class Transformer(Module):
         self.rate_dropout = nn.Dropout(config['model']['dropout_rates'])
         self.embedding_dropout = nn.Dropout(p=config['model']['dropout_embedding'])
 
-
         if not config.model.cat_pos_emb:
             pe = torch.zeros(self.seq_len, self.factor_dim)
+            torch.nn.init.xavier_uniform(pe)
             position = torch.arange(0, self.seq_len, dtype=torch.float).unsqueeze(1)
             self.register_buffer('pe', position.long())
             self.pos_embedding = nn.Embedding(self.seq_len, self.factor_dim)
@@ -234,6 +234,7 @@ class Transformer(Module):
             self.encoder = Encoder(config, self.factor_dim, encoder_layer, self.seq_len)
         else:
             pe = torch.zeros(self.seq_len, config.model.pos_emb_size)
+            torch.nn.init.xavier_uniform(pe)
             pe = pe.unsqueeze(0).transpose(0, 1) # t x 1 x d
             self.register_buffer('pe', pe)
             self.pos_embedding = Parameter(self.pe)

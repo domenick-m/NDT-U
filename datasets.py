@@ -367,7 +367,6 @@ def get_pretraining_data(config):
 
         chopped_spikes.append(torch.from_numpy(spikes.astype(np.float32)))
         session_names.append(names)
-    print(torch.cat(chopped_spikes, 0).shape)
     return torch.cat(chopped_spikes, 0), np.concatenate(session_names, 0)
     # Should this be removed ^^
 
@@ -430,7 +429,6 @@ def get_alignment_matricies(config):
         heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
         heldin_channels = torch.ones(n_channels, dtype=bool)
         heldin_channels[heldout_channels] = False
-        print(heldout_channels)
 
         avg_conds[session] = []
         trials_dict[session] = {}

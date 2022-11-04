@@ -130,7 +130,6 @@ def run_training(config, device, name):
             allow_val_change=True
         )
         config = CN(get_wandb_config())
-        
 
     name = get_run_name(config, name)
 
