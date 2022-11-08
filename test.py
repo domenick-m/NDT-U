@@ -70,7 +70,13 @@ def test_func(config, model):
 
         names = [session for i in range(hi_chopped_spks.shape[0])]
         with torch.no_grad():
-            rates, output = model(hi_chopped_spks, names)
+            torch_rates, output = [], []
+            for i in range(0, hi_chopped_spks.shape[0], 10):
+                ret_tuple = model(hi_chopped_spks[i:i+10, :, :], names[i:i+10])
+                torch_rates.append(ret_tuple[0])
+                output.append(ret_tuple[1])
+            rates = torch.cat(torch_rates, 0)
+            output = torch.cat(output, 0)
 
         factors_df = pd.DataFrame(output[:, -1, :].cpu().numpy(), index=spks_idx[29:], columns=pd.MultiIndex.from_tuples([('factors', f'{i}') for i in range(output.shape[-1])]))
         dataset.data = pd.concat([dataset.data, factors_df], axis=1)

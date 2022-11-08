@@ -53,6 +53,7 @@ def start_tmux_sweep(ag_gpus):
         pane.send_keys('ndt;c')
         for i in range(n_gpus - 1):
             pane = window.split_window(vertical=True)
+            window.select_layout('even-vertical')
             pane.send_keys('ndt;c')
         window.select_layout('even-vertical')
 
@@ -95,7 +96,7 @@ def add_tmux_agents(ag_gpus):
 
         for idx in ag_gpus:
             pane = window.select_pane(idx)
-            pane.send_keys(f'./train.py --add --gpu {idx}')
+            pane.send_keys(f'ndt;./train.py --add --gpu {idx}')
 
     else: print('This command must be ran within a tmux session.')
 
