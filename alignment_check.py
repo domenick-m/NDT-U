@@ -29,7 +29,7 @@ trials_dict = {}
 
 for session in config.data.pretrain_sessions:
     dataset = copy.deepcopy(datasets[session])
-    dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
+    # dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
     dataset.resample(config.data.bin_size / 1000)
     dataset.smooth_spk(config.data.smth_std, name='smth')
 
@@ -68,10 +68,10 @@ for session in config.data.pretrain_sessions:
         trial_list = []
         smth_trial_list = []
         for trial_id, trial in trials.groupby('trial_id'):
-            # trial_list.append(trial.spikes.to_numpy())
-            # smth_trial_list.append(trial.spikes_smth.to_numpy())
-            trial_list.append(trial.spikes.to_numpy()[:, heldin_channels])
-            smth_trial_list.append(trial.spikes_smth.to_numpy()[:, heldin_channels])
+            trial_list.append(trial.spikes.to_numpy())
+            smth_trial_list.append(trial.spikes_smth.to_numpy())
+            # trial_list.append(trial.spikes.to_numpy()[:, heldin_channels])
+            # smth_trial_list.append(trial.spikes_smth.to_numpy()[:, heldin_channels])
         trials_dict[session][cond_id] = smth_trial_list
         avg_conds[session].append(np.mean(smth_trial_list, 0))
 
@@ -112,7 +112,7 @@ for day in range(ndays):
 import wandb
 
 # with wandb.init(project='Alignment-Verification', name='All Channel PCs') as run:
-with wandb.init(project='Alignment-Verification', name='X-Corr Removed Heldin Channel PCs') as run:
+with wandb.init(project='test', name='X-Corr Removed Heldin Channel PCs') as run:
 # with wandb.init(project='Alignment-Verification', name='Heldin Channel PCs') as run:
 
     # # PLOT COND AVG
@@ -176,6 +176,64 @@ with wandb.init(project='Alignment-Verification', name='X-Corr Removed Heldin Ch
 
 
     wandb.log({'PC_plots_cond_avg': wandb.Html(html_string, inject=False)})
+    fig = go.Figure()
+    for idx, session in enumerate(session_list):
+        avg_cond_arr = np.array(list(avg_conds[session])) #(conds, bins, chans)
+        for condi, cond in enumerate(avg_cond_arr):
+            cond = np.dot(cond, alignment_matrices[idx].T)
+            cond = cond + alignment_biases[idx]
+
+            fig.add_trace(
+                go.Scatter3d(
+                    x=cond[:, 3], 
+                    y=cond[:, 4], 
+                    z=cond[:, 5],
+                    mode='lines',
+                    line=dict(color=f'{colors.rgb2hex(cm.tab10(condi))}'),
+                )
+            )
+
+    fig.update_layout(
+        width=430,
+        height=410,
+        autosize=False,
+        showlegend=False,
+        title={
+            'text': "Condition Averaged PCs",
+            'y':0.96,
+            'yanchor': 'bottom'
+        },
+        scene=dict(
+            xaxis_showspikes=False,
+            yaxis_showspikes=False,
+            zaxis_showspikes=False,
+            xaxis_title="PC3",
+            yaxis_title="PC4",
+            zaxis_title="PC5",
+            camera=dict(
+                center=dict(
+                    x=0.065,
+                    y=0.0,
+                    z=-0.075,
+                    # z=-0.12,
+                ),
+                eye=dict(
+                    x=1.3, 
+                    y=1.3, 
+                    z=1.3
+                )
+            ),
+            aspectratio = dict( x=1, y=1, z=1 ),
+            aspectmode = 'manual'
+        ),
+    )
+
+    fig.update_layout(margin=dict(r=0, l=0, b=0, t=20))
+    config = {'displayModeBar': False}
+    html_string = fig.to_html(config=config)
+
+
+    wandb.log({'PC_plots_cond_avg 2nd PCs': wandb.Html(html_string, inject=False)})
 
     # fig.write_html(f"Cond_avg_PCs.html", config=config)
 
