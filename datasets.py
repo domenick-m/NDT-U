@@ -393,6 +393,8 @@ def get_alignment_matricies(config):
     avg_conds = {}
     trials_dict = {}
 
+    cond_list = None
+
     for session in config.data.pretrain_sessions:
         dataset = copy.deepcopy(datasets[session])
 
@@ -418,7 +420,9 @@ def get_alignment_matricies(config):
         trial_data['X&Y'] = list(zip(trial_data['targetPos']['x'], trial_data['targetPos']['y']))
         trial_data['condition'] = 0
 
-        for xy, id in list(zip(trial_data['X&Y'].unique(), np.arange(1,9))):    
+        if cond_list == None:
+            cond_list = list(zip(trial_data['X&Y'].unique(), np.arange(1,9)))
+        for xy, id in cond_list:    
             indices = trial_data.index[trial_data['X&Y'] == xy]
             trial_data.loc[indices, 'condition'] = id
 
