@@ -482,7 +482,8 @@ def test(path=None):
         factors = np.array(factors)
         fs = factors.shape
         factors = factors.reshape((fs[0] * fs[1], fs[2]))
-        pca = Pipeline([('scaling', StandardScaler()), ('pca', PCA(n_components=3))])
+        pca = PCA(n_components=3)
+        # pca = Pipeline([('scaling', StandardScaler()), ('pca', PCA(n_components=3))])
         pca.fit(factors)
 
         # COND AVG

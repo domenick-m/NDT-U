@@ -329,59 +329,59 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
                 counter += 1
                 if counter == 10:
                     counter = 0
-                    plt.pcolormesh(pe_factors_saved.T.cpu().numpy(), cmap = 'Reds' )
-                    plt.tight_layout()
-                    plt.savefig(f"images/{model.name}_pos_facs.png")
-                    plt.close()
-
-                    plt.pcolormesh(factors_saved.T.cpu().numpy(), cmap = 'Reds' )
-                    plt.tight_layout()
-                    plt.savefig(f"images/{model.name}_facs.png")
-                    plt.close()
-
-                    # plt.pcolormesh(labels[0,:,:].T.cpu().numpy(), cmap = 'Reds' )
+                    # plt.pcolormesh(pe_factors_saved.T.cpu().numpy(), cmap = 'Reds' )
                     # plt.tight_layout()
-                    # plt.savefig(f"images/{model.name}_spks.png")
+                    # plt.savefig(f"images/{model.name}_pos_facs.png")
                     # plt.close()
 
-                    plt.pcolormesh(rates[0,:,:].T.exp().cpu().numpy(), cmap = 'Reds' )
-                    plt.tight_layout()
-                    plt.savefig(f"images/{model.name}_rates.png")
-                    plt.close()
+                    # plt.pcolormesh(factors_saved.T.cpu().numpy(), cmap = 'Reds' )
+                    # plt.tight_layout()
+                    # plt.savefig(f"images/{model.name}_facs.png")
+                    # plt.close()
 
-                    plt.pcolormesh(output_saved.T.exp().cpu().numpy(), cmap = 'Reds' )
-                    plt.tight_layout()
-                    plt.savefig(f"images/{model.name}_output.png")
-                    plt.close()
+                    # # plt.pcolormesh(labels[0,:,:].T.cpu().numpy(), cmap = 'Reds' )
+                    # # plt.tight_layout()
+                    # # plt.savefig(f"images/{model.name}_spks.png")
+                    # # plt.close()
+
+                    # plt.pcolormesh(rates[0,:,:].T.exp().cpu().numpy(), cmap = 'Reds' )
+                    # plt.tight_layout()
+                    # plt.savefig(f"images/{model.name}_rates.png")
+                    # plt.close()
+
+                    # plt.pcolormesh(output_saved.T.exp().cpu().numpy(), cmap = 'Reds' )
+                    # plt.tight_layout()
+                    # plt.savefig(f"images/{model.name}_output.png")
+                    # plt.close()
                     
-                    pos_emb = pe_saved.T
-                    plt.pcolormesh(pos_emb.cpu().numpy(), cmap = 'Reds' )
-                    plt.tight_layout()
-                    plt.savefig(f"images/{model.name}_pos_emb.png")
-                    plt.close()
+                    # pos_emb = pe_saved.T
+                    # plt.pcolormesh(pos_emb.cpu().numpy(), cmap = 'Reds' )
+                    # plt.tight_layout()
+                    # plt.savefig(f"images/{model.name}_pos_emb.png")
+                    # plt.close()
 
-                    pic_dict = {
-                        "rates": wandb.Image(f"images/{model.name}_rates.png"), 
-                        # "spikes": wandb.Image(f"images/{model.name}_spks.png"),
-                        "factors": wandb.Image(f"images/{model.name}_facs.png"),
-                        "pos factors": wandb.Image(f"images/{model.name}_pos_facs.png"),
-                        "pos emb": wandb.Image(f"images/{model.name}_pos_emb.png"),
-                        "output": wandb.Image(f"images/{model.name}_output.png")
-                    }
-                    # for idx, readout in enumerate(readouts):
-                    #     plt.pcolormesh(readouts[readout].weight.cpu().numpy(), cmap = 'Reds' )
-                    #     plt.tight_layout()
-                    #     plt.savefig(f"images/{model.name}_readout_{readout}.png")
-                    #     plt.close()
-                    #     pic_dict[f"readout_{readout}"] = wandb.Image(f"images/{model.name}_readout_{readout}.png") 
+                    # pic_dict = {
+                    #     "rates": wandb.Image(f"images/{model.name}_rates.png"), 
+                    #     # "spikes": wandb.Image(f"images/{model.name}_spks.png"),
+                    #     "factors": wandb.Image(f"images/{model.name}_facs.png"),
+                    #     "pos factors": wandb.Image(f"images/{model.name}_pos_facs.png"),
+                    #     "pos emb": wandb.Image(f"images/{model.name}_pos_emb.png"),
+                    #     "output": wandb.Image(f"images/{model.name}_output.png")
+                    # }
+                    # # for idx, readout in enumerate(readouts):
+                    # #     plt.pcolormesh(readouts[readout].weight.cpu().numpy(), cmap = 'Reds' )
+                    # #     plt.tight_layout()
+                    # #     plt.savefig(f"images/{model.name}_readout_{readout}.png")
+                    # #     plt.close()
+                    # #     pic_dict[f"readout_{readout}"] = wandb.Image(f"images/{model.name}_readout_{readout}.png") 
 
-                    #     plt.pcolormesh(readouts[readout].bias.unsqueeze(1).cpu().numpy(), cmap = 'Reds' )
-                    #     plt.tight_layout()
-                    #     plt.savefig(f"images/{model.name}_readout_{readout}_bias.png")
-                    #     plt.close()
-                    #     pic_dict[f"readout_{readout}_bias"] = wandb.Image(f"images/{model.name}_readout_{readout}_bias.png") 
+                    # #     plt.pcolormesh(readouts[readout].bias.unsqueeze(1).cpu().numpy(), cmap = 'Reds' )
+                    # #     plt.tight_layout()
+                    # #     plt.savefig(f"images/{model.name}_readout_{readout}_bias.png")
+                    # #     plt.close()
+                    # #     pic_dict[f"readout_{readout}_bias"] = wandb.Image(f"images/{model.name}_readout_{readout}_bias.png") 
 
-                    wandb.log(pic_dict)
+                    # wandb.log(pic_dict)
 
 
                 if model.has_heldout:
@@ -413,12 +413,18 @@ def train(model, train_dataloader, val_dataloader, device, fold=''):
                 
                 improved, ovrw_val, comp_metric = metric_comparison(config, comp_met_val, results_dict)
                 
+                if config['setup']['save_model']:
+                    torch.save(model.state_dict(), save_path+'last_sd.pt')
+                    
                 if improved:
                     comp_met_val = ovrw_val
                     es_counter = 0
                     if config['setup']['save_model']:
                         torch.save(model, save_path + f'best_{comp_metric}.pt')
                 else: es_counter += 1
+
+                if config['setup']['save_model']:
+                    torch.save(model, save_path+'last.pt')
 
         # Update the report above the progress bar and upload to wandb
         upload_print_results(config, report, results_dict, progress_bar, save_path, fold)

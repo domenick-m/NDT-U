@@ -1,0 +1,11 @@
+method: random
+name: lr_factor_random_sweep
+program : train_.py
+command: ['${env}', 'python3', '${program}', '-y']
+parameters: 
+  model.factor_dim:
+    values: [1, 2, 3]
+  train.init_lr: 
+    max: 0.1
+    min: 0.0001
+# project entity NEED

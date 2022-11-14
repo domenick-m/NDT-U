@@ -349,6 +349,30 @@ def set_sweep_config(config, arg_dict):
         data = yaml.dump(cfg_node_to_dict(config), yamlfile)
     return sweep_id
 
+def set_sweep_config2(config, arg_dict):
+    '''Starts a sweep with wandb.sweep and creates a folder with the sweeps
+    config in it. Returns the id of the created sweep.
+
+    Args:
+        config (dict): A config object.
+        arg_dict (CfgNode): Dictionary of the CLI args used when calling train.
+    Returns:
+        sweep_id (int): The sweep id.
+    '''
+    # yamlfile = '/home/dmifsud/Projects/NDT-U/configs/full_rand_sweep.yaml'
+    with open(config.wandb.sweep_yaml, 'rb') as yamlf:
+        yaml_dict = yaml.load(yamlf)
+
+    yaml_dict['project'] = config['wandb']['project']
+    yaml_dict['entity'] = config['wandb']['entity']
+
+    sweep_id = wandb.sweep(yaml_dict, project=config['wandb']['project'])
+    path = './wandb/sweep-'+sweep_id+'/'
+    os.makedirs(path)
+    with open(path+'/config.yaml', 'w') as yamlfile:
+        data = yaml.dump(cfg_node_to_dict(config), yamlfile)
+    return sweep_id
+
 def plot_rates(rates):
     with open('test.npy', 'wb') as f:
         np.save(f, np.array(rates.cpu()))
