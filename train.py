@@ -64,7 +64,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from test import test_func
 
-from utils.data.create_local_t5data import get_trial_data
+from create_local_t5data import get_trial_data
 
 
 def main():

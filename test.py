@@ -1,4 +1,4 @@
-from utils.data.create_local_t5data import get_trial_data
+from create_local_t5data import get_trial_data
 from datasets import get_testing_data
 from utils_f import get_config
 import numpy as np
@@ -7,7 +7,7 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from datetime import datetime
-from utils.plot.plot_true_vs_pred_mvmnt import plot_true_vs_pred_mvmnt
+from utils.plotting.plot_true_vs_pred_mvmnt import plot_true_vs_pred_mvmnt
 import torch
 from utils_f import get_config_from_file, set_seeds
 from datasets import get_trial_data, chop, smooth_spikes
