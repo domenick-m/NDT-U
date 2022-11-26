@@ -1,5 +1,5 @@
 import sys
-from utils_f import (get_config, parse_args)
+# from utils_f import (get_config, parse_args)
 from data.t5_dataset import T5CursorDataset
 import pandas as pd
 import numpy as np
@@ -12,28 +12,39 @@ import matplotlib.pyplot as plt
 from matplotlib import cm, colors
 import plotly.graph_objects as go
 
+from utils.t5_utils import load_toolkit_datasets
+from utils.config_utils import get_config
 
-arg_dict = parse_args(sys.argv[1:])
-config = get_config(arg_dict)
+
+# arg_dict = parse_args(sys.argv[1:])
+config = get_config({})
 
 datasets = {}
 
-for session in [*config.data.pretrain_sessions, *config.data.finetune_sessions]:
-    if not session in datasets:
-        datasets[session] = T5CursorDataset(f'{config.data.dir}/{session}.mat')
+datasets = load_toolkit_datasets(config)
 
-session_csv = pd.read_csv(f'{config.data.dir}/sessions.csv')
+session_csv = pd.read_csv(config.dirs.sess_csv_path)
 
 avg_conds = {}
 trials_dict = {}
 
 cond_list = None
 
-for session in config.data.pretrain_sessions:
+for session in config.data.sessions:
     dataset = copy.deepcopy(datasets[session])
-    dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
+    # dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
     dataset.resample(config.data.bin_size / 1000)
     dataset.smooth_spk(config.data.smth_std, name='smth')
+
+    speed = np.linalg.norm(dataset.data.decVel, axis=1)
+    dataset.data['speed'] = speed
+    dataset.calculate_onset(
+        'speed', 
+        onset_threshold=0.005,
+        peak_prominence=0.1,
+        peak_distance_s=0.1,
+        multipeak_threshold=0.2,
+    )
 
     failed_trials = ~dataset.trial_info['is_successful'] 
     center_trials = dataset.trial_info['is_center_target']
@@ -41,8 +52,10 @@ for session in config.data.pretrain_sessions:
     cl_blocks =  ~dataset.trial_info['block_num'].isin([ol_block]).values.squeeze()
     
     trial_data = dataset.make_trial_data(
-        align_field='start_time',
-        align_range=(0, config.data.trial_len),
+        align_field='speed_onset',
+        # align_field='start_time',
+        align_range=(0, 1750),
+        # align_range=(0, config.data.trial_len),
         allow_overlap=True,
         ignored_trials=failed_trials | center_trials | cl_blocks
     )
@@ -53,16 +66,15 @@ for session in config.data.pretrain_sessions:
 
     # if cond_list == None:
     #     cond_list = list(zip(trial_data['X&Y'].unique(), np.arange(1,9)))
-    cond_list = list(zip(trial_data['X&Y'].unique(), np.arange(1,9)))
-
+    cond_list = list(zip(trial_data['X&Y'].unique(), np.arange(1,9))) if cond_list is None else cond_list
     for xy, id in cond_list:    
         indices = trial_data.index[trial_data['X&Y'] == xy]
         trial_data.loc[indices, 'condition'] = id
 
     n_channels = trial_data.spikes.shape[-1]
 
-    n_heldout = int(config.data.heldout_pct * n_channels)
-    np.random.seed(config.setup.seed)
+    n_heldout = int(config.data.pct_heldout * n_channels)
+    np.random.seed(config.data.heldout_seed)
     heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
     heldin_channels = torch.ones(n_channels, dtype=bool)
     heldin_channels[heldout_channels] = False
@@ -71,15 +83,16 @@ for session in config.data.pretrain_sessions:
     avg_conds[session] = []
     trials_dict[session] = {}
     for cond_id, trials in trial_data.groupby('condition'):
-        trial_list = []
-        smth_trial_list = []
-        for trial_id, trial in trials.groupby('trial_id'):
-            # trial_list.append(trial.spikes.to_numpy())
-            # smth_trial_list.append(trial.spikes_smth.to_numpy())
-            trial_list.append(trial.spikes.to_numpy()[:, heldin_channels])
-            smth_trial_list.append(trial.spikes_smth.to_numpy()[:, heldin_channels])
-        trials_dict[session][cond_id] = smth_trial_list
-        avg_conds[session].append(np.mean(smth_trial_list, 0))
+        if cond_id != 0:
+            trial_list = []
+            smth_trial_list = []
+            for trial_id, trial in trials.groupby('trial_id'):
+                # trial_list.append(trial.spikes.to_numpy())
+                # smth_trial_list.append(trial.spikes_smth.to_numpy())
+                trial_list.append(trial.spikes.to_numpy()[:, heldin_channels])
+                smth_trial_list.append(trial.spikes_smth.to_numpy()[:, heldin_channels])
+            trials_dict[session][cond_id] = smth_trial_list
+            avg_conds[session].append(np.mean(smth_trial_list, 0))
 
 session_list = list(avg_conds.keys())
 avg_cond_arr = np.array(list(avg_conds.values())) # (days, conds, bins, chans)

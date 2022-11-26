@@ -4,21 +4,17 @@ import plotly.graph_objects as go
 import copy
 
 
-def plot_pca(
-    trialized_pcs, 
-    conditions, 
-    title
-):
+def plot_pca(pcs, conditions, title, return_fig=False):
     # decrease storage footprint as much as possible
-    trialized_pcs = [trial.astype(np.float16) for trial in trialized_pcs]
+    pcs = [trial.astype(np.float16) for trial in pcs]
     
-    norm = colors.Normalize(vmin=-180, vmax=180, clip=True)
+    norm = colors.Normalize(vmin=0, vmax=8, clip=True)
     mapper = cm.ScalarMappable(norm=norm, cmap='hsv')
     mapper.set_array([])
 
     fig = go.Figure()
 
-    for trial, cond_id in zip(trialized_pcs, conditions):
+    for trial, cond_id in zip(pcs, conditions):
         fig.add_trace(
             go.Scatter3d(
                 x=trial[:, 0], 
@@ -66,5 +62,5 @@ def plot_pca(
     fig.update_layout(margin=dict(r=0, l=0, b=0, t=50))
 
     config = {'displayModeBar': False}
-    return fig.to_html(config=config, full_html=False, include_plotlyjs='cdn')
+    return fig if return_fig else fig.to_html(config=config, full_html=False, include_plotlyjs='cdn') 
     

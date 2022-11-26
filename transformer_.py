@@ -222,7 +222,7 @@ class Transformer(Module):
 
         if not config.model.cat_pos_emb:
             pe = torch.zeros(self.seq_len, self.factor_dim)
-            torch.nn.init.xavier_uniform(pe)
+            torch.nn.init.xavier_uniform_(pe)
             position = torch.arange(0, self.seq_len, dtype=torch.float).unsqueeze(1)
             self.register_buffer('pe', position.long())
             self.pos_embedding = nn.Embedding(self.seq_len, self.factor_dim)
@@ -231,7 +231,7 @@ class Transformer(Module):
             self.encoder = Encoder(config, self.factor_dim, encoder_layer, self.seq_len)
         else:
             pe = torch.zeros(self.seq_len, config.model.pos_emb_size)
-            torch.nn.init.xavier_uniform(pe)
+            torch.nn.init.xavier_uniform_(pe)
             pe = pe.unsqueeze(0).transpose(0, 1) # t x 1 x d
             self.register_buffer('pe', pe)
             self.pos_embedding = Parameter(self.pe)
@@ -245,7 +245,7 @@ class Transformer(Module):
         for idx, session in enumerate(config.data.sessions):
             session = session.replace('.', '_')
             self.readin[session] = nn.Linear(self.n_heldin if self.has_heldout else self.n_channels, self.factor_dim)
-            if not config.model.rand_readin_init:
+            if matrices is not None:
                 self.readin[session].weight = torch.nn.Parameter(matrices[idx])
                 self.readin[session].bias = torch.nn.Parameter(biases[idx])
                 if config.model.freeze_readin:
@@ -266,6 +266,11 @@ class Transformer(Module):
             for parameter in self.parameters():
                 if parameter.dim() > 1:
                     nn.init.normal_(parameter, mean=0.0, std=std)
+
+        if config.dirs.trained_mdl_path != '':
+            # update model parameters, strict is False because we wont have the same readins
+            self.load_state_dict(torch.load(config.dirs.trained_mdl_path, strict=False))
+            self.readin[session].weight.requires_grad = False
 
 
     # def move_to(self, device):

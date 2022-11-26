@@ -139,20 +139,20 @@ class BatchedLogger(nn.Module):
         # validation
         if loss_mask is None:
             self.val_data['sessions'].append(names)
-            self.val_data['spikes'].append(spikes.cpu())
-            self.val_data['ho_spikes'].append(ho_spikes.cpu())
-            self.val_data['rates'].append(rates.cpu())
-            self.val_data['loss'].append(loss.cpu())
+            self.val_data['spikes'].append(spikes)
+            self.val_data['ho_spikes'].append(ho_spikes)
+            self.val_data['rates'].append(rates)
+            self.val_data['loss'].append(loss)
             self.did_val = True
 
         # training
         else: 
             self.train_data['sessions'].append(names)
-            self.train_data['spikes'].append(spikes.detach().cpu())
-            self.train_data['ho_spikes'].append(ho_spikes.detach().cpu())
-            self.train_data['rates'].append(rates.detach().cpu())
-            self.train_data['loss'].append(loss.detach().cpu())
-            self.train_data['loss_mask'].append(loss_mask.detach().cpu())
+            self.train_data['spikes'].append(spikes.detach())
+            self.train_data['ho_spikes'].append(ho_spikes.detach())
+            self.train_data['rates'].append(rates.detach())
+            self.train_data['loss'].append(loss.detach())
+            self.train_data['loss_mask'].append(loss_mask.detach())
 
     def log_lr(self, scheduler):
        self.lr = scheduler.optimizer.param_groups[0]['lr']
@@ -232,9 +232,9 @@ class BatchedLogger(nn.Module):
 
 
     def calculate_metrics(self):
-        self.avg_metrics(self.train_data, 'train')
-        if self.did_val:
-            self.avg_metrics(self.val_data, 'val')
+        # self.avg_metrics(self.train_data, 'train')
+        # if self.did_val:
+            # self.avg_metrics(self.val_data, 'val')
         self.epoch += 1
 
     def log_metrics(self):
@@ -248,19 +248,19 @@ class BatchedLogger(nn.Module):
         metric = 'val_bps'
         improve = 'increase'
 
-        if metric not in self.results:
-            return False
+        # if metric not in self.results:
+        #     return False
 
-        met_val = self.results[metric]
+        # met_val = self.results[metric]
 
-        if (
-            self.best_metric == None or
-            (improve == 'increase' and met_val > self.best_metric) or 
-            (improve == 'decrease' and met_val < self.best_metric)
-        ):
-            self.best_metric = met_val
-            self.improve_epoch = self.epoch
-            return True
+        # if (
+        #     self.best_metric == None or
+        #     (improve == 'increase' and met_val > self.best_metric) or 
+        #     (improve == 'decrease' and met_val < self.best_metric)
+        # ):
+        #     self.best_metric = met_val
+        #     self.improve_epoch = self.epoch
+        #     return True
         
         return False
 
@@ -281,7 +281,7 @@ class BatchedLogger(nn.Module):
 
 
     def should_early_stop(self, ):
-        if self.config.train.es_patience >= (self.epoch - self.improve_epoch) and self.config.train.early_stopping:
-            return True
+        # if self.config.train.es_patience >= (self.epoch - self.improve_epoch) and self.config.train.early_stopping:
+        #     return True
 
         return False

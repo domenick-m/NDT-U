@@ -8,6 +8,7 @@ sys.path.append('../')
 from yacs.config import CfgNode as CN
 #────#
 from def_config_ import config
+import wandb
 '''──────────────────────────── config_utils.py _____________________________'''
 # This file contains ...
 
@@ -117,4 +118,17 @@ def get_config_from_file(path):
     file_config.merge_from_file(path)
     file_config.freeze()
     return file_config
+
+def update_config_from_sweep(config):
+    ''' 
+    '''
+    # overwrite the original config used in the sweep 
+    config = get_config_from_file(f'./wandb/sweep-{wandb.run.sweep_id}/config.yaml')
+    # the wandb config will only contain the values being swept over
+    for str_name in wandb.config.keys():
+        # wandb cannot use nested parameters for sweeps, dots are used to seperate
+        group, key = str_name.split('.')
+        config[group][key] = wandb.config[str_name] 
+
+    return config
 

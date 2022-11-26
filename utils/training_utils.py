@@ -160,15 +160,18 @@ def create_model_dir(config, name):
         print(f'\n! RENAMING !\nName is now: {name}\n')
 
     os.makedirs(path, exist_ok=False) # create run dir
-
-    with open(osp.join(path, 'config.yaml'), 'w') as yfile:
-        yaml.dump(cfg_node_to_dict(config), yfile)
         
     if config.log.to_wandb:
         wandb.run.name = name
     
-    return path
+    config.defrost()
+    config.dirs.save_dir = path
+    config.freeze()
 
+    with open(osp.join(path, 'config.yaml'), 'w') as yfile:
+        yaml.dump(cfg_node_to_dict(config), yfile)
+
+    return config
 
 def get_swept_params(sweep_cfg_dir):
     with open(sweep_cfg_dir, 'rb') as yamlf:
@@ -258,8 +261,6 @@ def print_train_configs(config, args):
             for param in config[sec].keys():
                 if param != 'sessions' and config[sec][param] != '':
                     config_dict[sec].append(format_config(sec, param, max_val_lens[sec], max_l(sec)).center(w_2 if sec == 'train' else w_1))
-            if sec == 'data':
-                config_dict[sec].append('')
 
     title = 'Pre-training' if config.dirs.trained_mdl_path == '' else ' Fine-tuning'
     
