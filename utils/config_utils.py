@@ -7,7 +7,7 @@ sys.path.append('../')
 #────#
 from yacs.config import CfgNode as CN
 #────#
-from def_config_ import config
+from def_config import config
 import wandb
 '''──────────────────────────── config_utils.py _____________________________'''
 # This file contains ...

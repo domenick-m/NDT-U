@@ -62,7 +62,7 @@ def load_toolkit_datasets(config):
             dataset.data['speed'] = speed
             
             # calculate movement onset with default values
-            dataset.calculate_onset('speed', onset_threshold=0.05)
+            dataset.calculate_onset('speed', onset_threshold=0.005)
 
             # get heldin channels and store on dataset
             dataset.heldin_channels = get_heldin_mask(config, n_channels)

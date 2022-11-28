@@ -6,7 +6,7 @@ import os.path as osp
 import numpy as np
 from utils.training_utils import set_seeds, set_device
 from utils.config_utils import get_config_from_file
-from transformer_ import Transformer
+from model import Transformer
 import pickle as pkl
 import h5py
 from sklearn.preprocessing import StandardScaler
@@ -14,9 +14,10 @@ from sklearn.decomposition import PCA
 from sklearn.pipeline import Pipeline
 import sys
 # from utils.data_utils import chop, get_heldin_mask, smooth
-from utils.plotting.plot_pca import plot_pca
+from utils.plot.pcs import plot_pcs
 from utils.t5_utils import get_trialized_data
-from utils.eval_utils import run_pca
+from utils.eval_utils import run_pca, run_decoding
+from utils.logging_utils import upload_plots
 
 
 import matplotlib.pyplot as plt
@@ -48,7 +49,10 @@ def run_evaluation(config, model):
 
     # make trialized open- and closed-loop data and run inference on it
     trialized_data = get_trialized_data(config, datasets, model)
-    
+
+    #all_vel
+    run_decoding(config, trialized_data)    
+
     factors = []
     for session in config.data.sessions:    
         for ids, trial in trialized_data[session]['ol_trial_data'].groupby(['condition', 'trial_id']):
@@ -62,17 +66,30 @@ def run_evaluation(config, model):
 
     ol_cond_avg, ol_single_trial, cl_single_trial = run_pca(config, trialized_data, pca)
 
-    html_string = plot_pca(*ol_cond_avg, 'OL Condition Averaged')
-    with open(f'{config.dirs.save_dir}/ol_cond_avg_.html', 'w') as f: 
-        f.write(html_string)
-        
-    html_string = plot_pca(*ol_single_trial, 'OL Single Trials')
-    with open(f'{config.dirs.save_dir}/ol_sing_trial.html', 'w') as f: 
-        f.write(html_string)
+    pca_plots = [
+        (ol_cond_avg, 'OL Condition Averaged PCs', 'ol_cond_avg_pcs'),
+        (ol_single_trial, 'OL Single Trial PCs', 'ol_single_tr_pcs'),
+        (cl_single_trial, 'CL Single Trial PCs', 'cl_single_tr_pcs'),
+    ]
 
-    html_string = plot_pca(*cl_single_trial, 'CL Single Trials')
-    with open(f'{config.dirs.save_dir}/cl_sing_trial.html', 'w') as f: 
-        f.write(html_string)
+    plot_names, html_strings = [], []
+
+    for plot in pca_plots:
+        plot_names.append(plot[1])
+        html_strings.append(plot_pcs(*plot[0], plot[1], animate=True))
+        
+    if config.log.save_plots in ['local', 'both']:
+        for plot, string in zip(pca_plots, html_strings):
+             with open(osp.join(config.dirs.save_dir, f'{plot[2]}.html'), 'w') as f: 
+                f.write(string)
+
+    run_name = osp.basename(config.dirs.save_dir)
+    if config.log.save_plots in ['wandb', 'both']:
+        upload_plots(run_name, plot_names, html_strings)
+    
+    # gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    # gscv.fit(train_rates, h5dict['train_vel'])
+    # result_dict['test decoding'] = gscv.score(test_rates, h5dict['test_vel'])
 
 if __name__ == "__main__":
     try:

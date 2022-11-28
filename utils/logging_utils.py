@@ -114,6 +114,100 @@ def create_or_get_run_dir(config, name):
     
     return name
 
+def upload_plots(run_name, plot_names, html_strings):
+    '''
+    '''
+    # make sure wandb is not running
+    wandb.finish()
+    wandb.init(project='plots', name=run_name)
+    for name, string in zip(plot_names, html_strings):
+        wandb.log({name : wandb.Html(string, inject=False)})
+    wandb.finish()
+
+
+
+def wandb_cleanup(config):
+    '''Deletes the run folder after it's been uploaded.
+
+    Args:
+        wandb (wandb): The imported wandb.
+    '''
+    if wandb.run != None:
+        run_id = wandb.run.id
+        wandb.finish()
+        api = wandb.Api()
+        run = api.run(f"{config['wandb']['entity']}/{config['wandb']['project']}/{run_id}")
+
+        max_metrics = [
+            'val ho_lt_co_bps', 
+            'val ho_co_bps', 
+            'val hi_lt_co_bps', 
+            'val hi_co_bps'
+        ]
+        min_metrics = [
+            'train nll', 
+            'train lt_nll', 
+            'val nll', 
+            'val lt_nll'
+        ]
+        avg_metrics = [
+            'val ho_lt_co_bps', 
+            'val ho_co_bps', 
+            'val hi_lt_co_bps', 
+            'val hi_co_bps',
+            'val nll', 
+            'val lt_nll'
+        ]
+
+        for metric in max_metrics:
+            if metric in run.summary.keys():
+                run.summary[f"{metric}_max"] = np.max(run.history()[metric])
+            if config['train']['val_type'] == 'cross_val':
+                for i in range(config['train']['n_folds']):
+                    if f'{metric}_f{i}' in run.summary.keys():
+                        run.summary[f"{metric}_max_f{i}"] = np.max(run.history()[f"{metric}_f{i}"])
+
+        for metric in min_metrics:
+            if metric in run.summary.keys():
+                run.summary[f"{metric}_min"] = np.min(run.history()[metric])
+            if config['train']['val_type'] == 'cross_val':
+                for i in range(config['train']['n_folds']):
+                    if f'{metric}_f{i}' in run.summary.keys():
+                        run.summary[f"{metric}_min_f{i}"] = np.min(run.history()[f"{metric}_f{i}"])
+        
+        # run.summary.update()
+
+        if config['train']['val_type'] == 'cross_val':
+            for metric in avg_metrics:
+                tmp_list = []
+                for i in range(config['train']['n_folds']):
+                    if f'{metric}_f{i}' in run.summary.keys():
+                        tmp_list.append(run.summary[f'{metric}_f{i}'])
+                run.summary[f"{metric}_avg"] = np.mean(tmp_list)
+                run.summary[f"{metric}_std"] = np.std(tmp_list)
+                if metric in max_metrics:
+                    tmp_list = []
+                    for i in range(config['train']['n_folds']):
+                        if f'{metric}_max_f{i}' in run.summary.keys():
+                            tmp_list.append(run.summary[f'{metric}_max_f{i}'])
+                    run.summary[f"{metric}_max_avg"] = np.mean(tmp_list)
+                    run.summary[f"{metric}_max_std"] = np.std(tmp_list)
+                if metric in min_metrics:
+                    tmp_list = []
+                    for i in range(config['train']['n_folds']):
+                        if f'{metric}_min_f{i}' in run.summary.keys():
+                            tmp_list.append(run.summary[f'{metric}_min_f{i}'])
+                    run.summary[f"{metric}_min_avg"] = np.mean(tmp_list)
+                    run.summary[f"{metric}_min_std"] = np.std(tmp_list)
+
+        # if wandb.run != None:
+        #     run_id = wandb.run.id
+        #     # wandb.finish()
+        #     dir_q = get_wandb_dir()
+        #     wandb_dir = dir_q if dir_q != None else '.'
+        # shutil.rmtree(glob(wandb_dir+'/wandb/*'+run_id+'/')[0])
+        run.summary.update()
+
 
 class BatchedLogger(nn.Module):
     def __init__(self, config, n_heldout):
