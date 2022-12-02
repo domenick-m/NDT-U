@@ -10,9 +10,7 @@ import pickle as pkl
 import os.path as osp
 from torch.utils import data
 
-
 # General data utilities.
-# from dataset import Dataset
 
 class Dataset(data.Dataset):
     def __init__(self, config, chopped_spikes, session_names):

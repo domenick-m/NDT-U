@@ -86,10 +86,6 @@ def run_evaluation(config, model):
     run_name = osp.basename(config.dirs.save_dir)
     if config.log.save_plots in ['wandb', 'both']:
         upload_plots(run_name, plot_names, html_strings)
-    
-    # gscv = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
-    # gscv.fit(train_rates, h5dict['train_vel'])
-    # result_dict['test decoding'] = gscv.score(test_rates, h5dict['test_vel'])
 
 if __name__ == "__main__":
     try:

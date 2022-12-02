@@ -10,7 +10,7 @@ import torch
 import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.linear_model import Ridge
-from utils.t5_utils import load_toolkit_datasets, get_trialized_data
+from utils.toolkit_utils import load_toolkit_datasets, get_trialized_data
 import pickle as pkl
 import h5py
 
@@ -23,7 +23,7 @@ def align_sessions(config):
     print('\nCreating Alignment Matricies...\n')
     
     # load each snel_toolkit dataset into dict
-    datasets = load_toolkit_datasets(config, )
+    datasets = load_toolkit_datasets(config)
 
     # make trialized open- and closed-loop data
     trialized_data = get_trialized_data(config, datasets)
@@ -44,10 +44,8 @@ def align_sessions(config):
             smth_trial_list = []
             if cond_id != 0:
                 for trial_id, trial in trials.groupby('trial_id'):
-                    # print(trial.spikes_smth.to_numpy().shape)
                     if trial.spikes_smth.shape[0] == trial_len:
                         smth_trial_list.append(trial.spikes_smth.to_numpy()[:, dataset.heldin_channels])
-
 
                 # take the mean of all trials in condition
                 smth_trial_list = np.array(smth_trial_list)
@@ -167,12 +165,16 @@ def get_alignment_filename(config):
     data = config.data
     model = config.model
 
-    param_list = [model.factor_dim, data.smth_std, data.ol_align_field, data.ol_align_range[0], data.ol_align_range[1]]
+    param_list = [
+        model.factor_dim, 
+        data.smth_std, 
+        data.ol_align_field, 
+        data.ol_align_range[0], 
+        data.ol_align_range[1]
+    ]
     param_list += data.sessions
 
-    param_string = ''
-    for param in param_list: 
-        param_string += f'_{param}'
+    param_string = ''.join(f'_{param}' for param in param_list)
 
     h5_filename = f'pcr_{hash(param_string)}.h5'
 

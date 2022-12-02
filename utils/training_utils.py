@@ -272,7 +272,7 @@ def print_train_configs(config, args):
     #
 
     print(f'\n{" "*ts_1}╔═════════════════════════╗')
-    print(f'{"═"*ts_1}╣  {title} Model...  ╠{"═"*ts_2}')
+    print(f'{"═"*ts_1}╣     Training Model...   ╠{"═"*ts_2}')
     print(f'{" "*ts_1}╚═════════════════════════╝')
 
     print(f'\nSessions:')
