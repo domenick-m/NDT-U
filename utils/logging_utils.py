@@ -249,7 +249,7 @@ class BatchedLogger(nn.Module):
             self.train_data['loss_mask'].append(loss_mask.detach())
 
     def log_lr(self, scheduler):
-       self.lr = scheduler.optimizer.param_groups[0]['lr']
+        self.lr = scheduler.optimizer.param_groups[0]['lr']
 
     def log_to_csv(self):
         with open(f'{self.config.dirs.save_dir}/log.csv', 'a') as f:
@@ -285,29 +285,29 @@ class BatchedLogger(nn.Module):
         for metric in ['bps', 'lt_bps', 'hi_bps', 'hi_lt_bps', 'ho_bps', 'ho_lt_bps']:
             self.results[f'{prefix}_{metric}'] = []
 
-        for session in set(sessions):
-            sess_idxs = sessions == session
-            # all channels
-            bps, lt_bps = bits_per_spike(rates[sess_idxs], spikes[sess_idxs])
-            self.results[f'{prefix}_bps'].append(bps)
-            self.results[f'{prefix}_lt_bps'].append(lt_bps)
-            self.results[f'{prefix}_{session}_bps'] = bps
-            self.results[f'{prefix}_{session}_lt_bps'] = lt_bps  
+        # for session in set(sessions):
+        #     sess_idxs = sessions == session
+        #     # all channels
+        #     bps, lt_bps = bits_per_spike(rates[sess_idxs], spikes[sess_idxs])
+        #     self.results[f'{prefix}_bps'].append(bps)
+        #     self.results[f'{prefix}_lt_bps'].append(lt_bps)
+        #     self.results[f'{prefix}_{session}_bps'] = bps
+        #     self.results[f'{prefix}_{session}_lt_bps'] = lt_bps  
 
-            if self.has_heldout:
-                # heldin channels
-                hi_bps, hi_lt_bps = bits_per_spike(hi_rates[sess_idxs], hi_spikes[sess_idxs])
-                self.results[f'{prefix}_hi_bps'].append(hi_bps)
-                self.results[f'{prefix}_hi_lt_bps'].append(hi_lt_bps)
-                self.results[f'{prefix}_{session}_hi_bps'] = hi_bps
-                self.results[f'{prefix}_{session}_hi_lt_bps'] = hi_lt_bps        
+        #     if self.has_heldout:
+        #         # heldin channels
+        #         hi_bps, hi_lt_bps = bits_per_spike(hi_rates[sess_idxs], hi_spikes[sess_idxs])
+        #         self.results[f'{prefix}_hi_bps'].append(hi_bps)
+        #         self.results[f'{prefix}_hi_lt_bps'].append(hi_lt_bps)
+        #         self.results[f'{prefix}_{session}_hi_bps'] = hi_bps
+        #         self.results[f'{prefix}_{session}_hi_lt_bps'] = hi_lt_bps        
 
-                # heldout channels
-                ho_bps, ho_lt_bps = bits_per_spike(ho_rates[sess_idxs], ho_spikes[sess_idxs])
-                self.results[f'{prefix}_ho_bps'].append(ho_bps)
-                self.results[f'{prefix}_ho_lt_bps'].append(ho_lt_bps)
-                self.results[f'{prefix}_{session}_ho_bps'] = ho_bps
-                self.results[f'{prefix}_{session}_ho_lt_bps'] = ho_lt_bps
+        #         # heldout channels
+        #         ho_bps, ho_lt_bps = bits_per_spike(ho_rates[sess_idxs], ho_spikes[sess_idxs])
+        #         self.results[f'{prefix}_ho_bps'].append(ho_bps)
+        #         self.results[f'{prefix}_ho_lt_bps'].append(ho_lt_bps)
+        #         self.results[f'{prefix}_{session}_ho_bps'] = ho_bps
+        #         self.results[f'{prefix}_{session}_ho_lt_bps'] = ho_lt_bps
         
         # all channels
         self.results[f'{prefix}_bps'] = mean(self.results[f'{prefix}_bps'])
@@ -326,9 +326,9 @@ class BatchedLogger(nn.Module):
 
 
     def calculate_metrics(self):
-        # self.avg_metrics(self.train_data, 'train')
-        # if self.did_val:
-            # self.avg_metrics(self.val_data, 'val')
+        self.avg_metrics(self.train_data, 'train')
+        if self.did_val:
+            self.avg_metrics(self.val_data, 'val')
         self.epoch += 1
 
     def log_metrics(self):
@@ -337,24 +337,25 @@ class BatchedLogger(nn.Module):
         if self.config.log.to_csv:
             self.log_to_csv()
         self.init_data()
+        pass
 
     def has_improved(self):
         metric = 'val_bps'
         improve = 'increase'
 
-        # if metric not in self.results:
-        #     return False
+        if metric not in self.results:
+            return False
 
-        # met_val = self.results[metric]
+        met_val = self.results[metric]
 
-        # if (
-        #     self.best_metric == None or
-        #     (improve == 'increase' and met_val > self.best_metric) or 
-        #     (improve == 'decrease' and met_val < self.best_metric)
-        # ):
-        #     self.best_metric = met_val
-        #     self.improve_epoch = self.epoch
-        #     return True
+        if (
+            self.best_metric == None or
+            (improve == 'increase' and met_val > self.best_metric) or 
+            (improve == 'decrease' and met_val < self.best_metric)
+        ):
+            self.best_metric = met_val
+            self.improve_epoch = self.epoch
+            return True
         
         return False
 
@@ -375,7 +376,7 @@ class BatchedLogger(nn.Module):
 
 
     def should_early_stop(self, ):
-        # if self.config.train.es_patience >= (self.epoch - self.improve_epoch) and self.config.train.early_stopping:
-        #     return True
+        if self.config.train.es_patience >= (self.epoch - self.improve_epoch) and self.config.train.early_stopping:
+            return True
 
         return False

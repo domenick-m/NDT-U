@@ -1,5 +1,4 @@
 import torch
-from utils.t5_utils import load_toolkit_datasets
 import pandas as pd
 import copy
 import os.path as osp
@@ -15,7 +14,7 @@ from sklearn.pipeline import Pipeline
 import sys
 # from utils.data_utils import chop, get_heldin_mask, smooth
 from utils.plot.pcs import plot_pcs
-from utils.t5_utils import get_trialized_data
+from utils.toolkit_utils import load_toolkit_datasets, get_trialized_data
 from utils.eval_utils import run_pca, run_decoding
 from utils.logging_utils import upload_plots
 
@@ -51,17 +50,22 @@ def run_evaluation(config, model):
     trialized_data = get_trialized_data(config, datasets, model)
 
     #all_vel
-    run_decoding(config, trialized_data)    
+    # run_decoding(config, trialized_data)  
+
+    trial_len = (config.data.ol_align_range[1] - config.data.ol_align_range[0]) / config.data.bin_size
 
     factors = []
     for session in config.data.sessions:    
-        for ids, trial in trialized_data[session]['ol_trial_data'].groupby(['condition', 'trial_id']):
+        for ids, trial in trialized_data[session]['ol_trial_data'].groupby([('cond_id', 'n'), 'trial_id']):
             # do not run pca on return trials
-            if ids[0] != 0:
+            if ids[0] > 0:
+                print("please test")
+            # if ids[0] > 0 and trial.factors_smth.shape[0] == trial_len:
                 factors.append(trial.factors_smth.to_numpy())
 
     factors = np.concatenate(factors, 0)
-    pca = Pipeline([('scaling', StandardScaler()), ('pca', PCA(n_components=3))])
+    pca = PCA(n_components=3)
+    # pca = Pipeline([('scaling', StandardScaler()), ('pca', PCA(n_components=3))])
     pca.fit(factors)
 
     ol_cond_avg, ol_single_trial, cl_single_trial = run_pca(config, trialized_data, pca)

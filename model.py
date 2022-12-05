@@ -257,6 +257,14 @@ class Transformer(Module):
                 self.readout[session] = nn.Linear(self.factor_dim + config.model.pos_emb_size, self.n_channels)
             else:
                 self.readout[session] = nn.Linear(self.factor_dim, self.n_channels)
+
+            # n_hi_chs = matrices[idx].shape[1]
+            # self.readout[session].weight.requires_grad = False
+            # self.readout[session].bias.requires_grad = False
+            # self.readout[session].weight[:n_hi_chs, :self.factor_dim] = matrices[idx].T
+            # self.readout[session].bias[:n_hi_chs] = torch.matmul(biases[idx] * -1, matrices[idx])
+            # self.readout[session].weight.requires_grad = True
+            # self.readout[session].bias.requires_grad = True
             # self.readout[session] = self.readout[session].to(torch.device('cuda:0'))
 
         self.zeros = self.attn_mask = self.loss_prob_mask = self.zero_prob_mask = self.random_prob_mask = None
@@ -305,7 +313,8 @@ class Transformer(Module):
             if self.config.model.scale_input:
                 factors *= self.scale
 
-            if self.config.model.cat_pos_emb: factors = torch.cat((factors, self.pos_embedding.repeat(1, factors.shape[1], 1)), -1)
+            if self.config.model.cat_pos_emb: 
+                factors = torch.cat((factors, self.pos_embedding.repeat(1, factors.shape[1], 1)), -1)
             else: factors += self.pos_embedding(self.pe)
 
             factors = self.embedding_dropout(factors)

@@ -13,9 +13,10 @@ from sklearn.linear_model import Ridge
 from utils.toolkit_utils import load_toolkit_datasets, get_trialized_data
 import pickle as pkl
 import h5py
+import hashlib
 
 
-def align_sessions(config):
+def align_sessions(config, only_successful=True):
     '''
     '''
     alignment_matrices, alignment_biases = [], []
@@ -26,23 +27,23 @@ def align_sessions(config):
     datasets = load_toolkit_datasets(config)
 
     # make trialized open- and closed-loop data
-    trialized_data = get_trialized_data(config, datasets)
+    trialized_data = get_trialized_data(config, datasets, only_successful=only_successful)
 
     # make sure that each trial is this long
-    trial_len = (config.data.ol_align_range[1] - config.data.ol_align_range[0]) / config.data.bin_size
+    trial_len = (config.data.cl_align_range[1] - config.data.cl_align_range[0]) / config.data.bin_size
+    # trial_len = (config.data.ol_align_range[1] - config.data.ol_align_range[0]) / config.data.bin_size
     
     # ! TODO ! Make sure above code works with 20ms bin size on trial lengths other than 2000
-
     cond_avg_data = {}
     for session in config.data.sessions:
         # get one session
         dataset = datasets[session]
-        trialized_dataset = trialized_data[session]['ol_trial_data']
+        # trialized_dataset = trialized_data[session]['ol_trial_data']
+        trialized_dataset = trialized_data[session]['cl_trial_data']
         cond_avg_data[session] = []
-        
-        for cond_id, trials in trialized_dataset.groupby('condition'):
+        for cond_id_, trials in trialized_dataset.groupby(('cond_id', 'n')):
             smth_trial_list = []
-            if cond_id != 0:
+            if cond_id_ > 0:
                 for trial_id, trial in trials.groupby('trial_id'):
                     if trial.spikes_smth.shape[0] == trial_len:
                         smth_trial_list.append(trial.spikes_smth.to_numpy()[:, dataset.heldin_channels])
@@ -51,13 +52,16 @@ def align_sessions(config):
                 smth_trial_list = np.array(smth_trial_list)
                 # print(smth_trial_list.shape)
                 cond_avg_trials = np.mean(smth_trial_list, 0)
+                # print(cond_avg_trials.shape)
                 cond_avg_data[session].append(cond_avg_trials)
-
+        # print(np.array(cond_avg_data[session]).shape)
     # turn dataframe into array and reshape
     cond_avg_arr = np.array(list(cond_avg_data.values())) # (sessions, conds, bins, chans)
     cond_avg_arr = cond_avg_arr.transpose((3, 0, 1, 2)) # -> (chans, sessions, conds, bins)
     nchans, n_sessions, nconds, nbins = cond_avg_arr.shape
     cond_avg_arr = cond_avg_arr.reshape((nchans * n_sessions, nconds * nbins))
+
+    # print(nchans, n_sessions, nconds, nbins)
 
     # mean subtract data
     avg_cond_means = cond_avg_arr.mean(axis=1)
@@ -66,6 +70,7 @@ def align_sessions(config):
     # run pca to reduce to factor_dim dimensions
     pca = PCA(n_components=config.model.factor_dim)
     pca.fit(avg_cond_centered.T)
+    # pca.fit(avg_cond_centered.T)
 
     # get reduced dimensonality data
     dim_reduced_data = np.dot(avg_cond_centered.T, pca.components_.T).T
@@ -170,12 +175,16 @@ def get_alignment_filename(config):
         data.smth_std, 
         data.ol_align_field, 
         data.ol_align_range[0], 
-        data.ol_align_range[1]
+        data.ol_align_range[1],
+        data.pct_heldout,
+        data.heldout_seed
     ]
     param_list += data.sessions
 
     param_string = ''.join(f'_{param}' for param in param_list)
 
-    h5_filename = f'pcr_{hash(param_string)}.h5'
+    hashed_str = hashlib.md5(param_string.encode()).hexdigest()
+
+    h5_filename = f'pcr_{hashed_str}.h5'
 
     return  h5_filename

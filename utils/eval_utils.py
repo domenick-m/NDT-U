@@ -12,7 +12,6 @@ def merge_with_df(config, data, idx, name, dataset, smooth_data=True):
         name = f'{name}_smth'
     col_labels = pd.MultiIndex.from_tuples([(name, f'{i}') for i in range(data.shape[-1])])
     smth_df = pd.DataFrame(data, index=idx, columns=col_labels)
-    # smth_df = pd.DataFrame(data, index=idx[config.data.seq_len - 1:], columns=col_labels)
     dataset.data = pd.concat([dataset.data, smth_df], axis=1)
     return dataset
 
@@ -66,8 +65,8 @@ def run_pca(config, trialized_data, pca):
     trial_len = (config.data.ol_align_range[1] - config.data.ol_align_range[0]) / config.data.bin_size
 
     for session in config.data.sessions:    
-        for cond_id, trials in trialized_data[session]['ol_trial_data'].groupby('condition'):
-            if cond_id != 0:
+        for cond_id, trials in trialized_data[session]['ol_trial_data'].groupby(('cond_id', 'n')):
+            if cond_id > 0:
                 low_d_trials = []
                 for trial_id, trial in trials.groupby('trial_id'):
                     if trial.factors_smth.shape[0] == trial_len:
@@ -79,8 +78,8 @@ def run_pca(config, trialized_data, pca):
                 ol_cond_avg[0].append(np.array(low_d_trials).mean(0))
                 ol_cond_avg[1].append(cond_id)
 
-        for cond_id, trials in trialized_data[session]['cl_trial_data'].groupby('condition'):
-            if cond_id != 0:
+        for cond_id, trials in trialized_data[session]['cl_trial_data'].groupby(('cond_id', 'n')):
+            if cond_id > 0:
                 low_d_trials = []
                 for trial_id, trial in trials.groupby('trial_id'):
                     low_d_trials.append(pca.transform(trial.factors_smth.to_numpy()))

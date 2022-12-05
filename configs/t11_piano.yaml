@@ -1,5 +1,5 @@
 config:
   dirs:
-    cfg_path: /home/dmifsud/Projects/NDT-U/configs/t11_piano.yaml
     dataset_dir: /home/dmifsud/Projects/NDT-U/data/t11_piano
-    raw_data_dir: /snel/share/data/braingate/T11/T11PianoSessions
+  data:
+    sessions: ['2022-05-17', '2022-05-26', '2022-05-31', '2022-06-02']

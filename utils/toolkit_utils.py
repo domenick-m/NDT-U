@@ -1,15 +1,19 @@
 import pickle as pkl
 import os.path as osp
-from data.t5_radial_8.dataset import T5CursorDataset
+# from data.t5_radial_8.dataset import T5CursorDataset
 import torch
 import os
-import sys
+import hashlib
 
 import numpy as np
 import copy
 import pandas as pd
 from utils.data_utils import chop, get_heldin_mask
 from utils.eval_utils import chop_infer_join, merge_with_df
+import sys
+from data.t11_piano import dataset as t11_piano
+from data.t5_radial_8 import dataset as t5_radial_8
+from data.t11_fixed_decoder import dataset as t11_fixed_decoder
 
 def load_toolkit_datasets(config):
     '''
@@ -33,7 +37,7 @@ def load_toolkit_datasets(config):
         else:
             # load mat into snel_toolkit dataset object
             dataset = get_toolkit_dataset(config, session)
-            # dataset = T5CursorDataset(osp.join(config.dirs.raw_data_dir, f'{session}.mat'))
+
             n_channels = dataset.data.spikes.shape[-1]        
 
             # if masking correlated channels, create a mask of the non-correled channels
@@ -53,17 +57,17 @@ def load_toolkit_datasets(config):
                 xcorr_mask[xcorr_channels] = False
 
             # convert bin size from ms to sec 
-            dataset.resample(config.data.bin_size / 1e3) 
+            # dataset.resample(config.data.bin_size / 1e3) 
 
             # 
             dataset = merge_with_df(config, dataset.data.spikes, dataset.data.spikes.index, 'spikes', dataset)
 
-            # calculate speed from X and Y velocity
-            speed = np.linalg.norm(dataset.data.decVel, axis=1)
-            dataset.data['speed'] = speed
+            # # calculate speed from X and Y velocity
+            # speed = np.linalg.norm(dataset.data.decVel, axis=1)
+            # dataset.data['speed'] = speed
             
-            # calculate movement onset with default values
-            dataset.calculate_onset('speed', onset_threshold=0.005)
+            # # calculate movement onset with default values
+            # dataset.calculate_onset('speed', onset_threshold=0.005)
 
             # get heldin channels and store on dataset
             dataset.heldin_channels = get_heldin_mask(config, n_channels)
@@ -95,19 +99,18 @@ def get_pretraining_data(config):
     add a cached dataobject and a txt file to know what the config was if same , use else make new and cache
     '''
     datasets = load_toolkit_datasets(config)
-    session_csv = pd.read_csv(osp.join(config.dirs.dataset_dir, 'sessions.csv'))
 
     chopped_spikes, session_names = [], []
     for session in config.data.sessions:
-        # open-loop block is specified in csv for each dataset
-        ol_block = session_csv.loc[session_csv['session_id'] == session, 'ol_blocks'].item()
-
         spikes_arr = []
         # chop spikes within each block to avoid overlapping chops 
-        for block_num, block in datasets[session].data.groupby(('blockNums', 'n')):
-            if config.data.use_cl or block_num == ol_block:
-                spikes_arr.append(chop(block.spikes.to_numpy(), config.data.seq_len, config.data.overlap))
-  
+        for block_num, block in datasets[session].data.groupby(('block_num', 'n')):
+            if config.data.use_cl or block.trial_type.to_numpy()[0,0] == 'OL':
+                if block.spikes.to_numpy().shape[0] >= config.data.seq_len: 
+                    spikes_arr.append(chop(block.spikes.to_numpy(), config.data.seq_len, config.data.overlap))
+
+        assert len(spikes_arr) != 0, 'Make sure that if data is closed'
+
         spikes_arr = np.concatenate(spikes_arr, 0)
         chopped_spikes.append(torch.from_numpy(spikes_arr.astype(np.float32)))
         session_names.append([session for i in range(spikes_arr.shape[0])])
@@ -116,10 +119,9 @@ def get_pretraining_data(config):
     return torch.cat(chopped_spikes, 0), np.concatenate(session_names, 0)
 
 
-def get_trialized_data(config, datasets, model=None):
+def get_trialized_data(config, datasets, model=None, only_successful=True):
     '''
     '''
-    cond_id_csv = pd.read_csv(osp.join(config.dirs.dataset_dir, 'condition_ids.csv'))
     trialized_data = {}
 
     for session in config.data.sessions:
@@ -130,53 +132,49 @@ def get_trialized_data(config, datasets, model=None):
             dataset = chop_infer_join(config, dataset, session, model)
 
         # load in sessions.csv to get the open- and closed-loop blocks
-        session_csv = pd.read_csv(osp.join(config.dirs.dataset_dir, 'sessions.csv'))
-        ol_block = session_csv.loc[session_csv['session_id'] == session, 'ol_blocks'].item()
-        cl_blocks =  ~dataset.trial_info['block_num'].isin([ol_block]).values.squeeze()
+        cl_blocks =  dataset.trial_info['trial_type'].isin(['CL']).values.squeeze()
 
-        # trialize open-loop data
-        ol_trial_data = dataset.make_trial_data(
-            align_field=config.data.ol_align_field,
-            align_range=(config.data.ol_align_range[0], config.data.ol_align_range[1]),
-            ignored_trials=~dataset.trial_info['is_successful'] | cl_blocks
-        )
+        # # trialize open-loop data
+        # ol_trial_data = dataset.make_trial_data(
+        #     align_field=config.data.ol_align_field,
+        #     align_range=(config.data.ol_align_range[0], config.data.ol_align_range[1]),
+        #     ignored_trials=~dataset.trial_info['is_successful'] | cl_blocks
+        # )
+
+        ignored_trials = ~dataset.trial_info['is_successful'] | ~cl_blocks if only_successful else ~cl_blocks
 
         # trialize closed-loop data
         cl_trial_data = dataset.make_trial_data(
             align_field=config.data.cl_align_field,
             align_range=(config.data.cl_align_range[0], config.data.cl_align_range[1]),
-            ignored_trials=~dataset.trial_info['is_successful'] | ~cl_blocks
+            ignored_trials=ignored_trials
+            # ignored_trials=~cl_blocks
+            # ignored_trials=~dataset.trial_info['is_successful'] | ~cl_blocks
         )
 
-        # assign condition id to trials based on cond_id_csv
-        for trial_data in [ol_trial_data, cl_trial_data]:
-            trial_data.sort_index(axis=1, inplace=True)
-            trial_data['X&Y'] = list(zip(trial_data.targetPos.x, trial_data.targetPos.y))
-            trial_data['condition'] = 0
-
-            for _, row in cond_id_csv.iterrows():
-                indices = trial_data.index[trial_data['X&Y'] == (row['x'], row['y'])]
-                trial_data.loc[indices, 'condition'] = row['id']
-    
-        trialized_data[session] = {'ol_trial_data': ol_trial_data, 'cl_trial_data': cl_trial_data}
+        trialized_data[session] = {'cl_trial_data': cl_trial_data}
+        # trialized_data[session] = {'ol_trial_data': ol_trial_data, 'cl_trial_data': cl_trial_data}
     return trialized_data
 
 def get_data_filename(config, session):
 
     data = config.data
-    model = config.model
 
     param_list = [
-        session, 
-        config.data.xcorr_thesh, 
-        config.data.bin_size, 
-        config.data.smth_std, 
-        config.data.smth_std
+        session,
+        data.rem_xcorr,
+        data.xcorr_thesh, 
+        data.bin_size, 
+        data.smth_std, 
+        data.pct_heldout, 
+        data.heldout_seed, 
     ]
 
     param_string = ''.join(f'_{param}' for param in param_list)
 
-    h5_filename = f'data_{hash(param_string)}.pkl'
+    hashed_str = hashlib.md5(param_string.encode()).hexdigest()
+
+    h5_filename = f'data_{hashed_str}.pkl'
 
     return  h5_filename
 
