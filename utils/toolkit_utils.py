@@ -57,17 +57,19 @@ def load_toolkit_datasets(config):
                 xcorr_mask[xcorr_channels] = False
 
             # convert bin size from ms to sec 
-            # dataset.resample(config.data.bin_size / 1e3) 
+            dataset.resample(config.data.bin_size / 1e3) 
 
             # 
             dataset = merge_with_df(config, dataset.data.spikes, dataset.data.spikes.index, 'spikes', dataset)
 
-            # # calculate speed from X and Y velocity
-            # speed = np.linalg.norm(dataset.data.decVel, axis=1)
-            # dataset.data['speed'] = speed
-            
-            # # calculate movement onset with default values
-            # dataset.calculate_onset('speed', onset_threshold=0.005)
+            # only t5 radial8 has decVel
+            if 'decVel' in dataset.data:
+                # calculate speed from X and Y velocity
+                speed = np.linalg.norm(dataset.data.decVel, axis=1)
+                dataset.data['speed'] = speed
+                
+                # calculate movement onset with default values
+                dataset.calculate_onset('speed', onset_threshold=0.005)
 
             # get heldin channels and store on dataset
             dataset.heldin_channels = get_heldin_mask(config, n_channels)
@@ -119,12 +121,15 @@ def get_pretraining_data(config):
     return torch.cat(chopped_spikes, 0), np.concatenate(session_names, 0)
 
 
-def get_trialized_data(config, datasets, model=None, only_successful=True):
+def get_trialized_data(config, datasets, model=None):
     '''
     '''
     trialized_data = {}
 
     for session in config.data.sessions:
+        trialized_data[session] = {}
+
+        # get snel_toolkit dataset from load_toolkit_dataset's dictionary
         dataset = datasets[session]
 
         # if model included in call then run inference and before making trials
@@ -134,26 +139,23 @@ def get_trialized_data(config, datasets, model=None, only_successful=True):
         # load in sessions.csv to get the open- and closed-loop blocks
         cl_blocks =  dataset.trial_info['trial_type'].isin(['CL']).values.squeeze()
 
-        # # trialize open-loop data
-        # ol_trial_data = dataset.make_trial_data(
-        #     align_field=config.data.ol_align_field,
-        #     align_range=(config.data.ol_align_range[0], config.data.ol_align_range[1]),
-        #     ignored_trials=~dataset.trial_info['is_successful'] | cl_blocks
-        # )
-
-        ignored_trials = ~dataset.trial_info['is_successful'] | ~cl_blocks if only_successful else ~cl_blocks
+        # trialize open-loop data
+        if dataset.has_OL:
+            trialized_data[session]['ol_trial_data'] = dataset.make_trial_data(
+                align_field=config.data.ol_align_field,
+                align_range=(config.data.ol_align_range[0], config.data.ol_align_range[1]),
+                ignored_trials=~dataset.trial_info['is_successful'] | cl_blocks
+            )
 
         # trialize closed-loop data
-        cl_trial_data = dataset.make_trial_data(
-            align_field=config.data.cl_align_field,
-            align_range=(config.data.cl_align_range[0], config.data.cl_align_range[1]),
-            ignored_trials=ignored_trials
-            # ignored_trials=~cl_blocks
-            # ignored_trials=~dataset.trial_info['is_successful'] | ~cl_blocks
-        )
+        if dataset.has_CL:
+            trialized_data[session]['cl_trial_data'] = dataset.make_trial_data(
+                align_field=config.data.cl_align_field,
+                align_range=(config.data.cl_align_range[0], config.data.cl_align_range[1]),
+                ignored_trials=~dataset.trial_info['is_successful'] | ~cl_blocks,
+                allow_overlap=True
+            )
 
-        trialized_data[session] = {'cl_trial_data': cl_trial_data}
-        # trialized_data[session] = {'ol_trial_data': ol_trial_data, 'cl_trial_data': cl_trial_data}
     return trialized_data
 
 def get_data_filename(config, session):

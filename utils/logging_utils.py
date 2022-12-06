@@ -234,19 +234,21 @@ class BatchedLogger(nn.Module):
         if loss_mask is None:
             self.val_data['sessions'].append(names)
             self.val_data['spikes'].append(spikes)
-            self.val_data['ho_spikes'].append(ho_spikes)
             self.val_data['rates'].append(rates)
             self.val_data['loss'].append(loss)
+            if self.has_heldout:
+                self.val_data['ho_spikes'].append(ho_spikes)
             self.did_val = True
 
         # training
         else: 
             self.train_data['sessions'].append(names)
             self.train_data['spikes'].append(spikes.detach())
-            self.train_data['ho_spikes'].append(ho_spikes.detach())
             self.train_data['rates'].append(rates.detach())
             self.train_data['loss'].append(loss.detach())
             self.train_data['loss_mask'].append(loss_mask.detach())
+            if self.has_heldout:
+                self.train_data['ho_spikes'].append(ho_spikes.detach())
 
     def log_lr(self, scheduler):
         self.lr = scheduler.optimizer.param_groups[0]['lr']
@@ -262,8 +264,10 @@ class BatchedLogger(nn.Module):
         loss = torch.cat(data_dict['loss'], 0)
         rates = torch.cat(data_dict['rates'], 0).exp()
         hi_spikes = torch.cat(data_dict['spikes'], 0)
-        ho_spikes = torch.cat(data_dict['ho_spikes'], 0)
-        spikes = torch.cat([hi_spikes, ho_spikes], -1)
+        if self.has_heldout:
+            ho_spikes = torch.cat(data_dict['ho_spikes'], 0)
+            spikes = torch.cat([hi_spikes, ho_spikes], -1)
+        else: spikes = hi_spikes
         sessions = np.concatenate(data_dict['sessions'], 0)
 
         if prefix == 'train':
@@ -285,29 +289,29 @@ class BatchedLogger(nn.Module):
         for metric in ['bps', 'lt_bps', 'hi_bps', 'hi_lt_bps', 'ho_bps', 'ho_lt_bps']:
             self.results[f'{prefix}_{metric}'] = []
 
-        # for session in set(sessions):
-        #     sess_idxs = sessions == session
-        #     # all channels
-        #     bps, lt_bps = bits_per_spike(rates[sess_idxs], spikes[sess_idxs])
-        #     self.results[f'{prefix}_bps'].append(bps)
-        #     self.results[f'{prefix}_lt_bps'].append(lt_bps)
-        #     self.results[f'{prefix}_{session}_bps'] = bps
-        #     self.results[f'{prefix}_{session}_lt_bps'] = lt_bps  
+        for session in set(sessions):
+            sess_idxs = sessions == session
+            # all channels
+            bps, lt_bps = bits_per_spike(rates[sess_idxs], spikes[sess_idxs])
+            self.results[f'{prefix}_bps'].append(bps)
+            self.results[f'{prefix}_lt_bps'].append(lt_bps)
+            # self.results[f'{prefix}_{session}_bps'] = bps
+            # self.results[f'{prefix}_{session}_lt_bps'] = lt_bps  
 
-        #     if self.has_heldout:
-        #         # heldin channels
-        #         hi_bps, hi_lt_bps = bits_per_spike(hi_rates[sess_idxs], hi_spikes[sess_idxs])
-        #         self.results[f'{prefix}_hi_bps'].append(hi_bps)
-        #         self.results[f'{prefix}_hi_lt_bps'].append(hi_lt_bps)
-        #         self.results[f'{prefix}_{session}_hi_bps'] = hi_bps
-        #         self.results[f'{prefix}_{session}_hi_lt_bps'] = hi_lt_bps        
+            if self.has_heldout:
+                # heldin channels
+                hi_bps, hi_lt_bps = bits_per_spike(hi_rates[sess_idxs], hi_spikes[sess_idxs])
+                self.results[f'{prefix}_hi_bps'].append(hi_bps)
+                self.results[f'{prefix}_hi_lt_bps'].append(hi_lt_bps)
+                # self.results[f'{prefix}_{session}_hi_bps'] = hi_bps
+                # self.results[f'{prefix}_{session}_hi_lt_bps'] = hi_lt_bps        
 
-        #         # heldout channels
-        #         ho_bps, ho_lt_bps = bits_per_spike(ho_rates[sess_idxs], ho_spikes[sess_idxs])
-        #         self.results[f'{prefix}_ho_bps'].append(ho_bps)
-        #         self.results[f'{prefix}_ho_lt_bps'].append(ho_lt_bps)
-        #         self.results[f'{prefix}_{session}_ho_bps'] = ho_bps
-        #         self.results[f'{prefix}_{session}_ho_lt_bps'] = ho_lt_bps
+                # heldout channels
+                ho_bps, ho_lt_bps = bits_per_spike(ho_rates[sess_idxs], ho_spikes[sess_idxs])
+                self.results[f'{prefix}_ho_bps'].append(ho_bps)
+                self.results[f'{prefix}_ho_lt_bps'].append(ho_lt_bps)
+                # self.results[f'{prefix}_{session}_ho_bps'] = ho_bps
+                # self.results[f'{prefix}_{session}_ho_lt_bps'] = ho_lt_bps
         
         # all channels
         self.results[f'{prefix}_bps'] = mean(self.results[f'{prefix}_bps'])

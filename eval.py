@@ -58,14 +58,14 @@ def run_evaluation(config, model):
     for session in config.data.sessions:    
         for ids, trial in trialized_data[session]['ol_trial_data'].groupby([('cond_id', 'n'), 'trial_id']):
             # do not run pca on return trials
-            if ids[0] > 0:
-                print("please test")
-            # if ids[0] > 0 and trial.factors_smth.shape[0] == trial_len:
+            # if ids[0] > 0:
+            #     print("please test")
+            if ids[0] > 0 and trial.factors_smth.shape[0] == trial_len:
                 factors.append(trial.factors_smth.to_numpy())
 
     factors = np.concatenate(factors, 0)
-    pca = PCA(n_components=3)
-    # pca = Pipeline([('scaling', StandardScaler()), ('pca', PCA(n_components=3))])
+    # pca = PCA(n_components=3)
+    pca = Pipeline([('scaling', StandardScaler()), ('pca', PCA(n_components=3))])
     pca.fit(factors)
 
     ol_cond_avg, ol_single_trial, cl_single_trial = run_pca(config, trialized_data, pca)

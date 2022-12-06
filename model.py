@@ -242,21 +242,22 @@ class Transformer(Module):
         matrices, biases = get_alignment_matricies(config)
         self.readin, self.readout = nn.ModuleDict({}), nn.ModuleDict({})
 
-        for idx, session in enumerate(config.data.sessions):
-            session = session.replace('.', '_')
-            self.readin[session] = nn.Linear(self.n_heldin if self.has_heldout else self.n_channels, self.factor_dim)
-            if matrices is not None:
-                self.readin[session].weight = torch.nn.Parameter(matrices[idx])
-                self.readin[session].bias = torch.nn.Parameter(biases[idx])
-                if config.model.freeze_readin:
-                    self.readin[session].weight.requires_grad = False
-                    self.readin[session].bias.requires_grad = False
-            # self.readin[session] = self.readin[session].to(torch.device('cuda:0'))
+        if config.model.use_readin:
+            for idx, session in enumerate(config.data.sessions):
+                session = session.replace('.', '_')
+                self.readin[session] = nn.Linear(self.n_heldin if self.has_heldout else self.n_channels, self.factor_dim)
+                if matrices is not None:
+                    self.readin[session].weight = torch.nn.Parameter(matrices[idx])
+                    self.readin[session].bias = torch.nn.Parameter(biases[idx])
+                    if config.model.freeze_readin:
+                        self.readin[session].weight.requires_grad = False
+                        self.readin[session].bias.requires_grad = False
+                # self.readin[session] = self.readin[session].to(torch.device('cuda:0'))
 
-            if self.config.model.cat_pos_emb:
-                self.readout[session] = nn.Linear(self.factor_dim + config.model.pos_emb_size, self.n_channels)
-            else:
-                self.readout[session] = nn.Linear(self.factor_dim, self.n_channels)
+                if self.config.model.cat_pos_emb:
+                    self.readout[session] = nn.Linear(self.factor_dim + config.model.pos_emb_size, self.n_channels)
+                else:
+                    self.readout[session] = nn.Linear(self.factor_dim, self.n_channels)
 
             # n_hi_chs = matrices[idx].shape[1]
             # self.readout[session].weight.requires_grad = False
@@ -281,14 +282,6 @@ class Transformer(Module):
             self.readin[session].weight.requires_grad = False
 
 
-    # def move_to(self, device):
-    #     self.to(device)
-        # self.readin = self.readin.to(device)
-        # self.readout = self.readout.to(device)
-        # for idx, session in enumerate(config.data.sessions):
-            # self.readin[session] = self.readin[session].to(torch.device('cuda:0'))
-            # self.readout[session] = self.readout[session].to(torch.device('cuda:0'))
-
     def forward(self, spikes, sessions, labels=None):
         ''' Forward pass.
 
@@ -299,7 +292,7 @@ class Transformer(Module):
             final_loss (Tensor): The loss. Size=[1]
             pred_rates (Tensor): The predicted rates. Size=[B, T, N]
         '''
-        if not self.training: #TEST this!!!!!!!!!!!!!!!!!!!!!!!!!
+        if not self.training:
             spikes = torch.clamp(spikes, max=self.max_train_spks)
 
         pred_rates = torch.empty((spikes.shape[0], spikes.shape[1], self.n_channels), device=spikes.device)

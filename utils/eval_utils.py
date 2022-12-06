@@ -8,7 +8,7 @@ from sklearn.linear_model import Ridge
 
 def merge_with_df(config, data, idx, name, dataset, smooth_data=True):
     if smooth_data:
-        data = smooth(data, config.data.smth_std, config.data.bin_size, causal=False)
+        data = smooth(data, config.data.smth_std, config.data.bin_size, causal=True)
         name = f'{name}_smth'
     col_labels = pd.MultiIndex.from_tuples([(name, f'{i}') for i in range(data.shape[-1])])
     smth_df = pd.DataFrame(data, index=idx, columns=col_labels)

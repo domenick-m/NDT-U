@@ -26,7 +26,7 @@ def plot_pcs(pcs, conditions, title, return_fig=False, animate=False):
         )
 
     fig.update_layout(
-        width=460,
+        width=450,
         height=500,
         autosize=False,
         showlegend=False,

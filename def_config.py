@@ -29,37 +29,20 @@ config.dirs.trained_mdl_path = ''
 config.dirs.save_dir = '/home/dmifsud/Projects/NDT-U/runs/test' 
 # Path to data directory, should contain dataset.py, a snel_toolkit dataset that has a `init_toolkit_dataset` function. 
 #  Cached data and pcrs will also be stored here.
-config.dirs.dataset_dir = '/home/dmifsud/Projects/NDT-U/data/t11_fixed_decoder'
+# config.dirs.dataset_dir = '/home/dmifsud/Projects/NDT-U/data/t11_fixed_decoder'
 # config.dirs.dataset_dir = '/home/dmifsud/Projects/NDT-U/data/t11_piano'
-# config.dirs.dataset_dir = '/home/dmifsud/Projects/NDT-U/data/t5_radial_8'
+config.dirs.dataset_dir = '/home/dmifsud/Projects/NDT-U/data/t5_radial_8'
 
 '''
    ╔════════════════════════════════════════════════════════════════════════╗
    ║                                  DATA                                  ║
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
-config.data.bin_size = 20   # ms to bin spikes by
+config.data.bin_size = 10   # ms to bin spikes by
 config.data.seq_len = 30   # Chop size in bins
-config.data.overlap = 5   # Overlapping bins between chops for training
+config.data.overlap = 20   # Overlapping bins between chops for training
 
 # Sessions to train on
-config.data.sessions = [
-   't11.2021.07.13',
-   't11.2021.07.20',
-   't11.2021.07.27',
-   't11.2021.07.30',
-   't11.2021.08.13',
-   't11.2021.08.16',
-   't11.2021.08.26',
-   't11.2021.09.02',
-   't11.2021.09.08',
-   # 't11.2021.09.20',
-   't11.2021.10.14',
-   # 't11.2021.10.21',
-   # 't11.2021.11.02',
-   # 't11.2021.11.15',
-   # 't11.2021.12.02'
-]
 # config.data.sessions = [
 #    't11.2021.07.13',
 #    't11.2021.07.20',
@@ -77,12 +60,14 @@ config.data.sessions = [
 #    # 't11.2021.11.15',
 #    # 't11.2021.12.02'
 # ]
+
 # config.data.sessions = ['2022-05-17', '2022-05-26', '2022-05-31', '2022-06-02']
+
 # config.data.sessions = [
 #    't5.2021.05.05',
 #    't5.2021.05.17',
 #    't5.2021.05.19',
-#    't5.2021.05.24',
+#    # 't5.2021.05.24',
 #    # 't5.2021.05.26',
 #    # 't5.2021.06.02',
 #    # 't5.2021.06.04',
@@ -98,19 +83,17 @@ config.data.sessions = [
 #    # 't5.2021.07.21',
 # ]
 
-config.data.ol_align_field = 'start_time'
-# config.data.ol_align_field = 'speed_onset'
-config.data.ol_align_range = [0, 1250]
-# config.data.ol_align_range = [0, 2000]
-# config.data.ol_align_range = [-350, 1250]
+# config.data.ol_align_field = 'start_time'
+config.data.ol_align_field = 'speed_onset'
+config.data.ol_align_range = [-350, 1250]
 config.data.cl_align_field = 'start_time'
 # config.data.cl_align_range = [500, 1000]
-config.data.cl_align_range = [0, 500]
+config.data.cl_align_range = [-1, 500]
 
 config.data.lag = 40   # ms to lag behavior by for decoding
 config.data.smth_std = 60   # ms std to smooth rates for PCR init
 config.data.use_cl = False   # if closed-loop blocks should be used to train model
-config.data.rem_xcorr = True   # Whether or not correlated channels should be removed.
+config.data.rem_xcorr = False   # Whether or not correlated channels should be removed.
 config.data.xcorr_thesh = 0.2   # Threshold to remove correlated channels
 config.data.pct_heldout = 0.0   # What percentage of channels should be heldout
 config.data.heldout_seed = 123456789   # seed for heldout
@@ -132,7 +115,7 @@ config.log.wandb_project = 'test'   # The wandb project the run should be stored
    ║                                 TRAIN                                  ║
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
-config.train.batch_size = 1024  # Number of samples to compute loss with
+config.train.batch_size = 512  # Number of samples to compute loss with
 config.train.epochs = 20000       # Number of full passes through dataset
 config.train.gpu = -1   # seed for training
 
@@ -166,28 +149,29 @@ config.train.val_seed = 123456789   # seed for getting validation set
 '''
 config.model.factor_dim = 64 # Dimensions that NDT will use after readin / before readout
 config.model.n_layers = 4 # The number of EncoderLayers the Encoder should have
-config.model.n_heads = 8 # The number of heads used in UndividedMultiheadAttention
-config.model.head_dim = 128 # The number of heads used in UndividedMultiheadAttention
-config.model.hidden_size = 32 # The size of the linear layers in each EncoderLayer
+config.model.n_heads = 3 # The number of heads used in UndividedMultiheadAttention
+config.model.head_dim = 64 # The number of heads used in UndividedMultiheadAttention
+config.model.hidden_size = 64 # The size of the linear layers in each EncoderLayer
 config.model.context_forward = 30 # How many timesteps in the future can a timestep attend to
 config.model.context_backward = 30 # How many timesteps in the past can a timestep attend to
 
 config.model.freeze_model = False # When fine-tuning should only the readout be trained
-config.model.rand_readin_init = False # If True, readin is randomly initalized; if False, readin is initalized with PCR
+config.model.use_readin = True 
+config.model.readin_init = 'ol' # ['ol', 'cl', 'rand']
 config.model.freeze_readin = True # If rand_readin_init is False, should the readin be frozen
 
 config.model.cat_pos_emb = True
-config.model.pos_emb_size = 64 
-config.model.scale_input = True
+config.model.pos_emb_size = 16 
+config.model.scale_input = False
 
 config.model.norm = 'layer' # ['layer', 'scale'] The normalization to be used in the EncoderLayers
 config.model.activation = 'relu' # ['relu', 'gelu']
 config.model.normal_init = False # do norm tests!!!
 
-config.model.dropout = 0.3 # Overall dropout, used in EncoderLayer
-config.model.dropout_rates = 0.2 # Dropout of model output (rates)
-config.model.dropout_embedding = 0.2 # Dropout applied after pos_embedding is added
-config.model.dropout_attention = 0.6 # Dropout applied to the attention matrix in UndividedMultiheadAttention
+config.model.dropout = 0.7 # Overall dropout, used in EncoderLayer
+config.model.dropout_rates = 0.4 # Dropout of model output (rates)
+config.model.dropout_embedding = 0.7 # Dropout applied after pos_embedding is added
+config.model.dropout_attention = 0.7 # Dropout applied to the attention matrix in UndividedMultiheadAttention
 
 config.model.loss_ratio = 0.25 # Percentage of tokens that loss is computed with
 config.model.mask_ratio = 0.95 # Percentage of tokens being used to compute the loss are zero masked
