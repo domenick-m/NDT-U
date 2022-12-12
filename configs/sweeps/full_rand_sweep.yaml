@@ -1,10 +1,24 @@
 method: random
 name: lr_factor_random_sweep
-program : train_.py
+program : train.py
 command: ['${env}', 'python3', '${program}', '-y', '--silent']
 parameters: 
-  model.factor_dim:
-    values: [1, 2, 3]
-  train.init_lr: 
-    max: 0.1
-    min: 0.0001
+  model.n_layers:
+    values: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  model.n_heads:
+    values: [2, 4, 6, 8, 12]
+  model.head_dim:
+    values: [16, 32, 64]
+  model.hidden_size:
+    values: [16, 32, 64, 128]
+  model.context_forward:
+    values: [1, 6, 30]
+  model.context_backward:
+    values: [1, 6, 30]
+  model.dropout:
+    values: [0.1, 0.3, 0.5, 0.7]
+  model.dropout_attention:
+    values: [0.1, 0.3, 0.5, 0.7]
+  model.mask_ratio:
+    values: [0.75, 0.85, 0.95, 1.0]
+  

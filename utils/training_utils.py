@@ -111,14 +111,16 @@ def set_seeds(config):
         config (dict): A config object.
     '''
     seed = config.train.seed
-    random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
+    random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = True
+    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+    torch.use_deterministic_algorithms(True)
 
 
 def set_device(config, arg_dict):
@@ -139,11 +141,11 @@ def set_device(config, arg_dict):
             gpu_list = smi_output.decode('utf-8').split('\n')
             gpu_list = list(filter(lambda x: 'Used' in x, gpu_list))
             gpu_list = [int(x.split(':')[1].replace('MiB', '').strip()) for x in gpu_list] # list of memory usage in MB
-            device = str(min(range(len(gpu_list)), key=lambda x: gpu_list[x])) # get argmin
+            device = min(range(len(gpu_list)), key=lambda x: gpu_list[x]) # get argmin
         else: device = str(config.train.gpu) # user defined GPU index
     # Using env vars allows cuda:0 to be used regardless of GPU
     if 'tmux' in arg_dict and not arg_dict['tmux']:
-        os.environ['CUDA_VISIBLE_DEVICES'] = device
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(device)
 
 
 def create_model_dir(config, name):
@@ -157,7 +159,7 @@ def create_model_dir(config, name):
     if n_runs > 0:
         name += f'_{n_runs}'
         path = osp.join(config.dirs.save_dir, name)
-        print(f'\n! RENAMING !\nName is now: {name}\n')
+        print(f'\n! RENAMING !\nName is now: {name}')
 
     os.makedirs(path, exist_ok=False) # create run dir
         
@@ -175,7 +177,7 @@ def create_model_dir(config, name):
 
 def get_swept_params(sweep_cfg_dir):
     with open(sweep_cfg_dir, 'rb') as yamlf:
-        yaml_dict = yaml.load(yamlf)
+        yaml_dict = yaml.safe_load(yamlf)
         param_list = [i.split('.')[1] for i in yaml_dict['parameters'].keys()]
         value_list = [str(i) for i in yaml_dict['parameters'].values()]
     return param_list, value_list
@@ -188,9 +190,9 @@ def create_progress_bar(config, model, wandb=None):
     w_2 = w_1 + f_width - (w_1 * 3 + 4)
 
     if config.log.to_wandb:
-        print('wandb URL:', wandb.run.get_url(), '\n')
+        print(f'\nwandb URL: {wandb.run.get_url()}')
 
-    params = f'n_parameters: {sum(param.numel() for param in model.parameters() if param.requires_grad):,}'
+    params = f'\nn_parameters: {sum(param.numel() for param in model.parameters() if param.requires_grad):,}'
     gpu_idx = f'GPU:{os.environ["CUDA_VISIBLE_DEVICES"]}'.center(w_1)
 
     name = osp.basename(config.dirs.save_dir)

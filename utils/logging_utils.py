@@ -30,12 +30,12 @@ def start_wandb_sweep(config, arg_dict):
         sweep_id (int): The sweep id.
     '''
     with open(config.dirs.sweep_cfg_path, 'rb') as yamlf:
-        yaml_dict = yaml.load(yamlf)
+        yaml_dict = yaml.safe_load(yamlf)
 
-    yaml_dict['project'] = config['wandb']['project']
-    yaml_dict['entity'] = config['wandb']['entity']
+    yaml_dict['project'] = config.log.wandb_project
+    yaml_dict['entity'] = config.log.wandb_entity
 
-    sweep_id = wandb.sweep(yaml_dict, project=config['wandb']['project'])
+    sweep_id = wandb.sweep(yaml_dict, project=config.log.wandb_project)
 
     path = f'./wandb/sweep-{sweep_id}/'
     os.makedirs(path)
@@ -77,8 +77,8 @@ def launch_wandb_agent(config, sweep_id):
 
     call = [
         "wandb", "agent", 
-        "-p", f"{config.wandb.project}", 
-        "-e", f"{config.wandb.entity}", 
+        "-p", f"{config.log.wandb_project}", 
+        "-e", f"{config.log.wandb_entity}", 
         f'{sweep_id}'
     ]
 
@@ -113,17 +113,6 @@ def create_or_get_run_dir(config, name):
         wandb.run.name = name
     
     return name
-
-def upload_plots(run_name, plot_names, html_strings):
-    '''
-    '''
-    # make sure wandb is not running
-    wandb.finish()
-    wandb.init(project='plots', name=run_name)
-    for name, string in zip(plot_names, html_strings):
-        wandb.log({name : wandb.Html(string, inject=False)})
-    wandb.finish()
-
 
 
 def wandb_cleanup(config):
@@ -270,9 +259,9 @@ class BatchedLogger(nn.Module):
         else: spikes = hi_spikes
         sessions = np.concatenate(data_dict['sessions'], 0)
 
-        if prefix == 'train':
-            loss_mask = torch.cat(self.train_data['loss_mask'], 0)
-            self.results[f'{prefix}_msk_nll'] = loss[loss_mask].mean()
+        # if prefix == 'train':
+            # loss_mask = torch.cat(self.train_data['loss_mask'], 0)
+            # self.results[f'{prefix}_msk_nll'] = loss[loss_mask].mean()
 
         self.results[f'{prefix}_nll'] = loss.mean()
         self.results[f'{prefix}_lt_nll'] = loss[:, -1, :].mean()

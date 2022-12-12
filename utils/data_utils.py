@@ -9,6 +9,7 @@ import torch
 import pickle as pkl
 import os.path as osp
 from torch.utils import data
+from utils.training_utils import set_seeds
 
 # General data utilities.
 
@@ -21,7 +22,7 @@ class Dataset(data.Dataset):
         self.n_samples = chopped_spikes.shape[0]
         self.n_channels = chopped_spikes.shape[-1]
 
-        self.n_heldout = int(config.data.pct_heldout * self.n_channels)
+        self.n_heldout = int(config.train.pct_heldout * self.n_channels)
         self.n_heldin = self.n_channels - self.n_heldout
 
         self.has_heldout = self.n_heldout > 0
@@ -57,7 +58,8 @@ def get_dataloaders(config, chopped_spikes, session_names):
     # load into generic training dataset
     all_data = Dataset(config, chopped_spikes, session_names)
 
-    print(f'\nTraining data samples: {all_data.n_samples}')
+    def _init_fn(worker_id):
+        set_seeds(config)
 
     generator = torch.Generator()
     generator.manual_seed(config.train.val_seed)
@@ -67,9 +69,12 @@ def get_dataloaders(config, chopped_spikes, session_names):
     train_indicies = list(shuffled_indicies[split_index:])
     val_indicies = list(shuffled_indicies[:split_index])
 
+    print(f'\nTraining set samples: {len(train_indicies)}\nValidation set samples: {len(val_indicies)}')
+
     train_dataloader = torch.utils.data.DataLoader(
         torch.utils.data.Subset(all_data, train_indicies),
         batch_size=config.train.batch_size,
+        worker_init_fn=_init_fn,
         generator=generator,
         shuffle=True,
     )
@@ -77,8 +82,9 @@ def get_dataloaders(config, chopped_spikes, session_names):
     val_dataloader = torch.utils.data.DataLoader(
         torch.utils.data.Subset(all_data, val_indicies),
         batch_size=config.train.batch_size,
+        worker_init_fn=_init_fn,
         generator=generator,
-        shuffle=True,
+        shuffle=False,
     )
 
     with open(osp.join(config.dirs.save_dir, 'dataset.pkl'), 'wb') as dfile:
@@ -90,9 +96,9 @@ def get_dataloaders(config, chopped_spikes, session_names):
 def get_heldin_mask(config, n_channels):
     '''
     '''
-    n_heldout = int(config.data.pct_heldout * n_channels)
+    n_heldout = int(config.train.pct_heldout * n_channels)
 
-    np.random.seed(config.data.heldout_seed)
+    np.random.seed(config.train.heldout_seed)
     heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
 
     heldin_channels_mask = torch.ones(n_channels, dtype=bool)
@@ -114,8 +120,12 @@ def smooth(data, gauss_width, bin_width, causal):
     '''
     kern_sd = int(gauss_width / bin_width)
     window = signal.gaussian(kern_sd * 6, kern_sd, sym=True)
+
     if causal: 
         window[len(window) // 2:] = 0
+    
     window /= np.sum(window)
     filt = lambda x: np.convolve(x, window, 'same')
+    
     return np.apply_along_axis(filt, 0, data)
+

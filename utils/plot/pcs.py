@@ -5,8 +5,12 @@ import copy
 
 
 def plot_pcs(pcs, conditions, title, return_fig=False, animate=False):
-    # decrease storage footprint as much as possible
-    pcs = [trial.astype(np.float16) for trial in pcs]
+    # # decrease storage footprint as much as possible
+    # if type(pcs[0]) == list:
+    #     # pcs = [trial.astype(np.float16) for trial in pcs]
+    #     pcs = [y.astype(np.float16) for x in pcs for y in x]
+    # else:
+    #     pcs = [trial.astype(np.float16) for trial in pcs]
     
     norm = colors.Normalize(vmin=0, vmax=8, clip=True)
     mapper = cm.ScalarMappable(norm=norm, cmap='hsv')
@@ -14,16 +18,28 @@ def plot_pcs(pcs, conditions, title, return_fig=False, animate=False):
 
     fig = go.Figure()
 
-    for trial, cond_id in zip(pcs, conditions):
-        fig.add_trace(
-            go.Scatter3d(
-                x=trial[:, 0], 
-                y=trial[:, 1], 
-                z=trial[:, 2],
-                mode='lines',
-                line=dict(color=f'{colors.rgb2hex(cm.tab10(cond_id-1))}'),
+    for i, cond_id in zip(pcs, conditions):
+        if type(pcs[0]) == list:
+            for trial in i:
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=trial[:, 0], 
+                        y=trial[:, 1], 
+                        z=trial[:, 2],
+                        mode='lines',
+                        line=dict(color=f'{colors.rgb2hex(cm.tab10(cond_id-1))}'),
+                    )
+                )
+        else:
+           fig.add_trace(
+                go.Scatter3d(
+                    x=i[:, 0], 
+                    y=i[:, 1], 
+                    z=i[:, 2],
+                    mode='lines',
+                    line=dict(color=f'{colors.rgb2hex(cm.tab10(cond_id-1))}'),
+                )
             )
-        )
 
     fig.update_layout(
         width=450,

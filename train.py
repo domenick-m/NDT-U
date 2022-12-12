@@ -64,7 +64,7 @@ def main():
     # Start a wandb sweep
     elif arg_dict['sweep']:
         sweep_id = start_wandb_sweep(config, arg_dict)
-        add_sweep_agent(config, sweep_id)
+        add_sweep_agent(config)
         # shutil.rmtree(glob('./wandb/*'+sweep_id+'/')[0]) # Remove wandb sweep folder when completed
    
     # Run training
@@ -103,6 +103,8 @@ def run_training(config, device, name):
 
     # always put model on GPU to train
     model.to(device)
+
+    # return model, train_dl, val_dl, dataset
 
     # run training loop
     train(model, train_dl, val_dl)
@@ -161,7 +163,8 @@ def train(model, train_dataloader, val_dataloader):
             model.batch_logger.log(sessions, spikes, ho_spikes, rates, loss, loss_mask)
 
             # masked timesteps are designated with -100 by model.preprocess_batch()
-            msk_loss = loss[loss_mask].mean()
+            # msk_loss = loss[loss_mask].mean()
+            msk_loss = loss[labels != -100].mean()
 
             # backprop only the masked timesteps
             msk_loss.backward()  

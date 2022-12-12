@@ -7,12 +7,16 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.linear_model import Ridge
 
 def merge_with_df(config, data, idx, name, dataset, smooth_data=True):
-    if smooth_data:
-        data = smooth(data, config.data.smth_std, config.data.bin_size, causal=True)
-        name = f'{name}_smth'
     col_labels = pd.MultiIndex.from_tuples([(name, f'{i}') for i in range(data.shape[-1])])
     smth_df = pd.DataFrame(data, index=idx, columns=col_labels)
     dataset.data = pd.concat([dataset.data, smth_df], axis=1)
+
+    if smooth_data:
+        smth_data = smooth(data, config.data.smth_std, config.data.bin_size, causal=False)
+        smth_name = f'{name}_smth'
+
+        return merge_with_df(config, smth_data, idx, smth_name, dataset, False)
+
     return dataset
 
 def chop_infer_join(config, dataset, session, model):
@@ -42,12 +46,10 @@ def chop_infer_join(config, dataset, session, model):
 
     # create rates dataframe
     np_output = rates[:, -1, :].cpu().numpy()
-    dataset = merge_with_df(config, np_output, spikes_idx[config.data.seq_len - 1:], 'rates', dataset, False)
     dataset = merge_with_df(config, np_output, spikes_idx[config.data.seq_len - 1:], 'rates', dataset)
 
     # create factors dataframe
     np_output = output[:, -1, :].cpu().numpy()
-    dataset = merge_with_df(config, np_output, spikes_idx[config.data.seq_len - 1:], 'factors', dataset, False)
     dataset = merge_with_df(config, np_output, spikes_idx[config.data.seq_len - 1:], 'factors', dataset)
 
     # return merged dataset
@@ -58,21 +60,24 @@ def run_pca(config, trialized_data, pca):
     '''
     # tuple is composed of: (data_list, cond_id_list)
     ol_cond_avg = ([], []) 
+    cl_cond_avg = ([], []) 
     ol_single_trial = ([], [])
     cl_single_trial = ([], [])
 
     # make sure that each trial is this long
-    trial_len = (config.data.ol_align_range[1] - config.data.ol_align_range[0]) / config.data.bin_size
+    ol_trial_len = (config.data.ol_align_range[1] - config.data.ol_align_range[0]) / config.data.bin_size
+    cl_trial_len = (config.data.cl_align_range[1] - config.data.cl_align_range[0]) / config.data.bin_size
 
     for session in config.data.sessions:    
         for cond_id, trials in trialized_data[session]['ol_trial_data'].groupby(('cond_id', 'n')):
+            cond_id = int(round(cond_id))
             if cond_id > 0:
                 low_d_trials = []
                 for trial_id, trial in trials.groupby('trial_id'):
-                    if trial.factors_smth.shape[0] == trial_len:
+                    if trial.factors_smth.shape[0] == ol_trial_len:
                         low_d_trials.append(pca.transform(trial.factors_smth.to_numpy()))
 
-                ol_single_trial[0].append(np.concatenate(low_d_trials, 0))
+                ol_single_trial[0].append(low_d_trials)
                 ol_single_trial[1].append(cond_id)
 
                 ol_cond_avg[0].append(np.array(low_d_trials).mean(0))
@@ -82,12 +87,16 @@ def run_pca(config, trialized_data, pca):
             if cond_id > 0:
                 low_d_trials = []
                 for trial_id, trial in trials.groupby('trial_id'):
-                    low_d_trials.append(pca.transform(trial.factors_smth.to_numpy()))
+                    if trial.factors_smth.shape[0] == cl_trial_len:
+                        low_d_trials.append(pca.transform(trial.factors_smth.to_numpy()))
 
-                cl_single_trial[0].append(np.concatenate(low_d_trials, 0))
+                cl_single_trial[0].append(low_d_trials)
                 cl_single_trial[1].append(cond_id)
     
-    return ol_cond_avg, ol_single_trial, cl_single_trial
+                cl_cond_avg[0].append(np.array(low_d_trials).mean(0))
+                cl_cond_avg[1].append(cond_id)
+
+    return ol_cond_avg, cl_cond_avg, ol_single_trial, cl_single_trial
 
 def run_decoding(config, trialized_data):
     '''
@@ -95,30 +104,49 @@ def run_decoding(config, trialized_data):
     lag_bins = int(config.data.lag / config.data.bin_size)
 
     all_vel, all_rates, all_factors = [], [], []
+    movement_vel, movement_rates, movement_factors = [], [], []
+
     for session in config.data.sessions:
-        for cond_id, trials in trialized_data[session]['ol_trial_data'].groupby('condition'):
-            if cond_id != 0:
-                for trial_id, trial in trials.groupby('trial_id'):
-                    all_vel.append(trial.decVel.to_numpy()[lag_bins:])
-                    all_rates.append(trial.rates_smth.to_numpy()[:-lag_bins])
-                    all_factors.append(trial.factors_smth.to_numpy()[:-lag_bins])
+        for ids, trial in trialized_data[session]['ol_trial_data'].groupby([('cond_id', 'n'), 'trial_id']):
+            # do decode return trials
+            if ids[0] > 0:
+                all_vel.append(trial.decVel.to_numpy()[lag_bins:])
+                all_rates.append(trial.rates_smth.to_numpy()[:-lag_bins])
+                all_factors.append(trial.factors_smth.to_numpy()[:-lag_bins])
+
+                start_offset = -config.data.ol_align_range[0] // config.data.bin_size
+                movement_vel.append(trial.decVel.to_numpy()[start_offset+lag_bins:])
+                movement_rates.append(trial.rates_smth.to_numpy()[start_offset:-lag_bins])
+                movement_factors.append(trial.factors_smth.to_numpy()[start_offset:-lag_bins])
     
     all_vel = np.concatenate(all_vel, 0)
     all_rates = np.concatenate(all_rates, 0)
     all_factors = np.concatenate(all_factors, 0)
 
+    movement_vel = np.concatenate(movement_vel, 0)
+    movement_rates = np.concatenate(movement_rates, 0)
+    movement_factors = np.concatenate(movement_factors, 0)
+
     result_dict = {}
 
     rates_decoder = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
     rates_decoder.fit(all_rates, all_vel)
-    result_dict['rates_decoding_all'] = rates_decoder.score(all_rates, all_vel)
+    result_dict['rates_decoding'] = rates_decoder.score(all_rates, all_vel)
 
     factors_decoder = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
     factors_decoder.fit(all_factors, all_vel)
-    result_dict['factors_decoding_all'] = factors_decoder.score(all_factors, all_vel)
+    result_dict['factors_decoding'] = factors_decoder.score(all_factors, all_vel)
 
-    # if config.log.to_wandb:
-        # wandb.log(result_dict)
+    rates_decoder = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    rates_decoder.fit(movement_rates, movement_vel)
+    result_dict['rates_movement_decoding'] = rates_decoder.score(movement_rates, movement_vel)
+
+    factors_decoder = GridSearchCV(Ridge(), {'alpha': np.logspace(-4, 0, 9)})
+    factors_decoder.fit(movement_factors, movement_vel)
+    result_dict['factors_movement_decoding'] = factors_decoder.score(movement_factors, movement_vel)
+
+    if config.log.to_wandb:
+        wandb.log(result_dict)
 
     if config.log.to_csv:
         with open(f'{config.dirs.save_dir}/log.csv', 'a') as f:

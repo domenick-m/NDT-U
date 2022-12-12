@@ -28,7 +28,8 @@ class MHA(Module):
         super(MHA, self).__init__()
         self.config = config
 
-        self.packed_dim_size = config.model.head_dim * config.model.n_heads
+        # self.packed_dim_size = config.model.head_dim * config.model.n_heads
+        self.packed_dim_size = n_features * config['model']['n_heads']
 
         # MHA uses a packed tensor, Queries Keys and Values all share the same weight matrix
         self.in_proj_weight = Parameter(torch.empty((3 * self.packed_dim_size, n_features)))
@@ -45,7 +46,8 @@ class MHA(Module):
         self.q, self.k, self.v = torch._C._nn.linear(src, self.in_proj_weight, self.in_proj_bias).chunk(3, dim=-1)
 
         # the view shape is [T x (B * n_heads) x head_dim]
-        self.view_shape = (src.shape[0], src.shape[1] * self.config.model.n_heads, self.config.model.head_dim)
+        self.view_shape = (src.shape[0], src.shape[1] * self.config['model']['n_heads'], src.shape[2])
+        # self.view_shape = (src.shape[0], src.shape[1] * self.config.model.n_heads, self.config.model.head_dim)
 
         self.q = self.q.contiguous().view(*self.view_shape).transpose(0, 1) / math.sqrt(self.view_shape[2])
         self.k = self.k.contiguous().view(*self.view_shape).transpose(0, 1)
@@ -61,7 +63,7 @@ class MHA(Module):
         # Apply softmax and dropout to attention matrix    
         self.attn = F.softmax(self.attn, dim=-1)
         if self.training:
-            self.attn = F.dropout(self.attn, p=self.config.model.dropout_attention )
+            self.attn = F.dropout(self.attn, p=self.config.model.dropout_attention)
         
         # Multiply attention matrix (QK) and values (V)
         self.attn_output = torch.bmm(self.attn, self.v).transpose(0, 1)
@@ -103,16 +105,16 @@ class EncoderLayer(TransformerEncoderLayer):
         self.dropout1 = nn.Dropout(config.model.dropout)
         self.dropout2 = nn.Dropout(config.model.dropout)
 
-        # # http://www.cs.toronto.edu/~mvolkovs/ICML2020_tfixup.pdf
-        # temp_state_dic = {}
-        # n_layers = config.model.n_layers
-        # for name, param in self.named_parameters():
-        #     if name in ["linear1.weight", "linear2.weight", "self_attn.out_proj.weight"]:
-        #         temp_state_dic[name] = param * (0.67 * (n_layers) ** (- 1. / 4.))
-        # for name in self.state_dict():
-        #     if name not in temp_state_dic:
-        #         temp_state_dic[name] = self.state_dict()[name]
-        # self.load_state_dict(temp_state_dic)
+        # http://www.cs.toronto.edu/~mvolkovs/ICML2020_tfixup.pdf
+        temp_state_dic = {}
+        n_layers = config.model.n_layers
+        for name, param in self.named_parameters():
+            if name in ["linear1.weight", "linear2.weight", "self_attn.out_proj.weight"]:
+                temp_state_dic[name] = param * (0.67 * (n_layers) ** (- 1. / 4.))
+        for name in self.state_dict():
+            if name not in temp_state_dic:
+                temp_state_dic[name] = self.state_dict()[name]
+        self.load_state_dict(temp_state_dic)
 
     def forward(self, src, attn_mask=None):
         '''Forward pass.
@@ -239,16 +241,21 @@ class Transformer(Module):
             encoder_layer = EncoderLayer(config, self.factor_dim + config.model.pos_emb_size, self.seq_len)
             self.encoder = Encoder(config, self.factor_dim + config.model.pos_emb_size, encoder_layer, self.seq_len)
 
+        # for parameter in self.parameters():
+        #     if parameter.dim() > 1:
+        #         # nn.init.normal_(parameter, mean=0.0, std=std)
+        #         nn.init.constant_(parameter, 0)
+
         matrices, biases = get_alignment_matricies(config)
         self.readin, self.readout = nn.ModuleDict({}), nn.ModuleDict({})
 
         if config.model.use_readin:
-            for idx, session in enumerate(config.data.sessions):
-                session = session.replace('.', '_')
+            for session_ in config.data.sessions:
+                session = session_.replace('.', '_')
                 self.readin[session] = nn.Linear(self.n_heldin if self.has_heldout else self.n_channels, self.factor_dim)
                 if matrices is not None:
-                    self.readin[session].weight = torch.nn.Parameter(matrices[idx])
-                    self.readin[session].bias = torch.nn.Parameter(biases[idx])
+                    self.readin[session].weight = torch.nn.Parameter(matrices[session_])
+                    self.readin[session].bias = torch.nn.Parameter(biases[session_])
                     if config.model.freeze_readin:
                         self.readin[session].weight.requires_grad = False
                         self.readin[session].bias.requires_grad = False
@@ -268,18 +275,23 @@ class Transformer(Module):
             # self.readout[session].bias.requires_grad = True
             # self.readout[session] = self.readout[session].to(torch.device('cuda:0'))
 
-        self.zeros = self.attn_mask = self.loss_prob_mask = self.zero_prob_mask = self.random_prob_mask = None
+        self.zeros = None
+        self.attn_mask = None
+        self.loss_prob_mask = None
+        self.zero_prob_mask = None
+        self.random_prob_mask = None
+        # self.zeros = self.attn_mask = self.loss_prob_mask = self.zero_prob_mask = self.random_prob_mask = None
 
-        if config.model.normal_init:
-            std = (2 / (5 * (self.n_neurons))) ** 0.5
-            for parameter in self.parameters():
-                if parameter.dim() > 1:
-                    nn.init.normal_(parameter, mean=0.0, std=std)
+        # if config.model.normal_init:
+        #     std = (2 / (5 * (self.n_neurons))) ** 0.5
+        #     for parameter in self.parameters():
+        #         if parameter.dim() > 1:
+        #             nn.init.normal_(parameter, mean=0.0, std=std)
 
-        if config.dirs.trained_mdl_path != '':
-            # update model parameters, strict is False because we wont have the same readins
-            self.load_state_dict(torch.load(config.dirs.trained_mdl_path, strict=False))
-            self.readin[session].weight.requires_grad = False
+        # if config.dirs.trained_mdl_path != '':
+        #     # update model parameters, strict is False because we wont have the same readins
+        #     self.load_state_dict(torch.load(config.dirs.trained_mdl_path, strict=False))
+        #     self.readin[session].weight.requires_grad = False
 
 
     def forward(self, spikes, sessions, labels=None):
@@ -388,7 +400,7 @@ class Transformer(Module):
 
         # Designate masked timesteps
         loss_mask = loss_mask.bool().unsqueeze(2).expand_as(labels)
-        # labels[~loss_mask] = -100
+        labels[~loss_mask] = -100
 
         # Zero mask
         if self.zero_prob_mask is None or self.zero_prob_mask.size() != labels.size():
@@ -408,6 +420,6 @@ class Transformer(Module):
         # Add heldout to labels if needed
         if self.has_heldout:
             labels = torch.cat([labels, heldout_spikes], -1)
-            loss_mask = torch.cat([loss_mask, torch.ones_like(heldout_spikes, dtype=bool)], -1)
+            # loss_mask = torch.cat([loss_mask, torch.ones_like(heldout_spikes, dtype=bool)], -1)
 
         return spikes, labels, loss_mask
