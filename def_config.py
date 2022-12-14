@@ -26,7 +26,7 @@ config.dirs.sweep_cfg_path = '/home/dmifsud/Projects/NDT-U/configs/sweeps/full_r
 # The path to the state dict the modle should be initialized with, this will be blank for pretrain
 config.dirs.trained_mdl_path = '' 
 # The directory the model should save it's state dict to, this will be samba for fine-tuning
-config.dirs.save_dir = '/home/dmifsud/Projects/NDT-U/runs/new_test' 
+config.dirs.save_dir = '/home/dmifsud/Projects/NDT-U/runs/t5_3_sessions' 
 # Path to data directory, should contain dataset.py, a snel_toolkit dataset that has a `init_toolkit_dataset` function. 
 #     Cached data and pcrs will also be stored here.
 config.dirs.dataset_dir = '/home/dmifsud/Projects/NDT-U/data/t5_radial_8'
@@ -40,7 +40,7 @@ config.dirs.dataset_dir = '/home/dmifsud/Projects/NDT-U/data/t5_radial_8'
 '''
 config.data.bin_size = 10   # ms to bin spikes by
 config.data.seq_len = 30   # Chop size in bins
-config.data.overlap = 10   # Overlapping bins between chops for training
+config.data.overlap = 12   # Overlapping bins between chops for training
 
 # Sessions to train on
 # config.data.sessions = [
@@ -107,15 +107,15 @@ config.log.to_wandb = True   # Whether or not data is uploaded to wandb
 config.log.save_plots = 'both'   # ['local', 'wandb', 'both'] Where evaluation plots should be stored
 config.log.wandb_silent = True   # 
 config.log.wandb_entity = 'emory-bg2'   # The wandb project the run should be stored in
-config.log.wandb_project = 'test'   # The wandb project the run should be stored in
+config.log.wandb_project = 't5_3_sessions'   # The wandb project the run should be stored in
 
 '''
    ╔════════════════════════════════════════════════════════════════════════╗
    ║                                 TRAIN                                  ║
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
-config.train.batch_size = 512  # Number of samples to compute loss with
-config.train.epochs = 500       # Number of full passes through dataset
+config.train.batch_size = 64  # Number of samples to compute loss with
+config.train.epochs = 1000       # Number of full passes through dataset
 config.train.gpu = -1   # seed for training
 
 config.train.early_stopping = False # Whether or not the model stops training due to low co-bps
@@ -131,10 +131,10 @@ config.train.init_lr = 0.005   # The initial learning rate to be used by the opt
 config.train.optimizer = 'AdamW'   # ['AdamW',] The optimizer to use
 config.train.weight_decay = 5.0e-07   # The weight decay value used by AdamW, kind of like L2 Reg but better
 config.train.scheduler = 'Cosine'   # ['None', 'Cosine',] The learning rate scheduler
-config.train.warmup_steps = 1000   # ! TEST THIS FOR EPOCHS VS STEPS !    Warmup epcohs used by Cosine scheduler, icreases lr to 1 in this many epochs before it follows cosine decay
+config.train.warmup_steps = 200   # ! TEST THIS FOR EPOCHS VS STEPS !    Warmup epcohs used by Cosine scheduler, icreases lr to 1 in this many epochs before it follows cosine decay
 config.train.max_grad_norm = 200.0   # The max gradient before value is clipped
 
-config.train.mask_max_span = 3 # The max number of timesteps that can be masked in a row randomly 
+config.train.mask_max_span = 10 # The max number of timesteps that can be masked in a row randomly 
 config.train.ramp_start = 8000 # Epoch when the expand prob starts to increase
 config.train.ramp_end = 12000 # Epoch when the expand prob remains at mask_max_span
 
@@ -150,11 +150,11 @@ config.train.pct_heldout = 0.0   # What percentage of channels should be heldout
    ║                                 MODEL                                  ║
    ╚════════════════════════════════════════════════════════════════════════╝
 '''
-config.model.factor_dim = 64 # Dimensions that NDT will use after readin / before readout
-config.model.n_layers = 6 # The number of EncoderLayers the Encoder should have
-config.model.n_heads = 6 # The number of heads used in UndividedMultiheadAttention
-config.model.head_dim = 32 # The number of heads used in UndividedMultiheadAttention
-config.model.hidden_size = 64 # The size of the linear layers in each EncoderLayer
+config.model.factor_dim = 32 # Dimensions that NDT will use after readin / before readout
+config.model.n_layers = 1 # The number of EncoderLayers the Encoder should have
+config.model.n_heads = 16 # The number of heads used in UndividedMultiheadAttention
+config.model.head_dim = 64 # The number of heads used in UndividedMultiheadAttention
+config.model.hidden_size = 16 # The size of the linear layers in each EncoderLayer
 
 config.model.context_forward = 30 # How many timesteps in the future can a timestep attend to
 config.model.context_backward = 30 # How many timesteps in the past can a timestep attend to
@@ -164,18 +164,18 @@ config.model.use_readin = True
 config.model.readin_init = 'ol' # ['ol', 'cl', 'rand']
 config.model.freeze_readin = True # If rand_readin_init is False, should the readin be frozen
 
-config.model.cat_pos_emb = False
-config.model.pos_emb_size = 64 
-config.model.scale_input = True
+config.model.cat_pos_emb = True
+config.model.pos_emb_size = 32 
+config.model.scale_input = False
 
 config.model.norm = 'layer' # ['layer', 'scale'] The normalization to be used in the EncoderLayers
 config.model.activation = 'relu' # ['relu', 'gelu']
 config.model.normal_init = False # do norm tests!!!
 
-config.model.dropout = 0.3 # Overall dropout, used in EncoderLayer
+config.model.dropout = 0.1 # Overall dropout, used in EncoderLayer
 config.model.dropout_rates = 0.1 # Dropout of model output (rates)
 config.model.dropout_embedding = 0.1 # Dropout applied after pos_embedding is added
-config.model.dropout_attention = 0.4 # Dropout applied to the attention matrix in UndividedMultiheadAttention
+config.model.dropout_attention = 0.1 # Dropout applied to the attention matrix in UndividedMultiheadAttention
 
 config.model.loss_ratio = 0.35 # Percentage of tokens that loss is computed with
 config.model.mask_ratio = 1.0 # Percentage of tokens being used to compute the loss are zero masked

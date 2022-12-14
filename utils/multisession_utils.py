@@ -22,7 +22,7 @@ def align_sessions(config):
     '''
     '''
     alignment_matrices, alignment_biases = {}, {}
-    
+
     # load each snel_toolkit dataset into dict
     datasets = load_toolkit_datasets(config)
 
@@ -131,9 +131,9 @@ def load_alignment_matricies(config, path):
     '''
     alignment_matrices, alignment_biases = {}, {}
     with h5py.File(path, 'r') as h5:
-            for session in config.data.sessions:
-                alignment_matrices[session] = torch.Tensor(np.array(h5[session]['matrix']))
-                alignment_biases[session] = torch.Tensor(np.array(h5[session]['bias']))
+        for session in config.data.sessions:
+            alignment_matrices[session] = torch.Tensor(np.array(h5[session]['matrix']))
+            alignment_biases[session] = torch.Tensor(np.array(h5[session]['bias']))
     return alignment_matrices, alignment_biases
 datasets = {}
 
@@ -141,116 +141,6 @@ datasets = {}
 def get_alignment_matricies(config):
     ''' 
     '''
-    # # Cache datasets for later use
-    # cached_data_dir = osp.join(config.dirs.dataset_dir, 'cached_data')
-    # os.makedirs(cached_data_dir, exist_ok=True)
-    
-    # # datasets = {}
-    # # for session in config.data.sessions:
-    # #     filename = get_data_filename(config, session)
-    # #     cached_data_path = osp.join(cached_data_dir, filename)
-
-    # #     dataset = get_toolkit_dataset(config, session)
-
-    # #     datasets[session] = dataset
-
-    # datasets = load_toolkit_datasets(config)
-
-
-    # session_csv = pd.read_csv(f'sessions.csv')
-
-    # avg_conds = {}
-    # trials_dict = {}
-
-    # for session in config.data.sessions:
-    #     dataset = copy.deepcopy(datasets[session])
-
-    #     # if config.data.rem_xcorr: 
-    #     #     dataset.get_pair_xcorr('spikes', threshold=0.2, zero_chans=True)
-
-    #     # dataset.resample(config.data.bin_size / 1000)
-    #     # dataset.smooth_spk(config.data.smth_std, name='smth')
-
-    #     # speed = np.linalg.norm(dataset.data.decVel, axis=1)
-    #     # dataset.data['speed'] = speed
-        
-    #     # dataset.calculate_onset('speed', onset_threshold=0.005)
-
-    #     failed_trials = ~dataset.trial_info['is_successful'] 
-    #     center_trials = dataset.trial_info['is_center_target']
-    #     ol_block = session_csv.loc[session_csv['session_id'] == session, 'ol_blocks'].item() # cl = [int(i) for i in session_csv.loc[session_csv['session_id'] == session, 'cl_blocks'].item().split(' ')]
-    #     cl_blocks =  ~dataset.trial_info['block_num'].isin([ol_block]).values.squeeze()
-        
-    #     trial_data = dataset.make_trial_data(
-    #         align_field='speed_onset',
-    #         align_range=(-350, 1250),
-    #         allow_overlap=True,
-    #         ignored_trials=failed_trials | cl_blocks
-    #     )
-
-    #     trial_data.sort_index(axis=1, inplace=True)
-    #     n_channels = trial_data.spikes.shape[-1]
-
-    #     n_heldout = int(config.train.pct_heldout * n_channels)
-    #     np.random.seed(config.train.heldout_seed)
-    #     heldout_channels = np.random.choice(n_channels, n_heldout, replace=False)
-    #     heldin_channels = torch.ones(n_channels, dtype=bool)
-    #     heldin_channels[heldout_channels] = False
-
-    #     avg_conds[session] = []
-    #     for cond_id in range(1,9):
-    #         smth_trial_list = []
-    #         for trial_id, trial in trial_data.groupby('trial_id'):
-    #             if datasets[session].trial_info.loc[trial_id].cond_id == cond_id:
-    #                 smth_trial_list.append(trial.spikes_smth.to_numpy()[:, heldin_channels])
-
-    #         # take the mean of all trials in condition
-    #         smth_trial_list = np.array(smth_trial_list)
-    #         cond_avg_trials = np.mean(smth_trial_list, 0)
-    #         avg_conds[session].append(cond_avg_trials)
-
-    # session_list = list(avg_conds.keys())
-
-    # avg_cond_arr = np.array(list(avg_conds.values())) # (days, conds, bins, chans)
-    # avg_cond_arr = avg_cond_arr.transpose((3, 0, 1, 2)) # -> (chans, days, conds, bins)
-    # nchans, ndays, nconds, nbins = avg_cond_arr.shape
-    # avg_cond_arr = avg_cond_arr.reshape((nchans * ndays, nconds * nbins))
-
-    # avg_cond_means = avg_cond_arr.mean(axis=1)
-    # avg_cond_centered = (avg_cond_arr.T - avg_cond_means.T).T
-
-    # pca = PCA(n_components=config.model.factor_dim)
-    # pca.fit(avg_cond_centered.T)
-
-    # dim_reduced_data = np.dot(avg_cond_centered.T, pca.components_.T).T
-    # avg_cond_arr = avg_cond_arr.reshape((nchans, ndays, nconds, nbins))
-
-    # dim_reduced_data_means = dim_reduced_data.mean(axis=1)
-    # dim_reduced_data_this = (dim_reduced_data.T - dim_reduced_data_means.T).T
-
-    # alignment_matrices = {}
-    # alignment_biases =  {}
-
-    # for day in range(ndays):
-    #     this_dataset_data = avg_cond_arr.reshape((nchans, ndays, nconds * nbins))[:, day, :].squeeze()
-
-    #     this_dataset_means = avg_cond_means.reshape(nchans, ndays)[:, day].squeeze()
-    #     this_dataset_centered = (this_dataset_data.T - this_dataset_means.T).T
-
-    #     reg = Ridge(alpha=1.0, fit_intercept=False)
-    #     reg.fit(this_dataset_centered.T, dim_reduced_data_this.T)
-
-    #     matrix = torch.from_numpy(np.copy(reg.coef_.astype(np.float32)))  # nchans x nPCs
-    #     alignment_matrices[session_list[day]] = matrix
-    #     bias = -1 * np.dot(this_dataset_means, reg.coef_.T)
-    #     bias = torch.from_numpy(bias.astype(np.float32))
-    #     alignment_biases[session_list[day]] = bias
-
-
-    # return alignment_matrices, alignment_biases
-    
-    # ''' OLD SECTION'''
-
     # readins will be randomly initialized
     if config.model.readin_init is None:
         return None, None
@@ -296,7 +186,10 @@ def get_alignment_filename(config):
         model.factor_dim, 
         train.pct_heldout,
         train.heldout_seed,
-        data.smth_std, 
+        train.val_seed,
+        train.pct_val,
+        train.val_type,
+        data.smth_std,
         data.ol_align_field, 
         data.cl_align_field, 
         *data.ol_align_range,

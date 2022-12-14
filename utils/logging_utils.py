@@ -35,18 +35,24 @@ def start_wandb_sweep(config, arg_dict):
     yaml_dict['project'] = config.log.wandb_project
     yaml_dict['entity'] = config.log.wandb_entity
 
-    sweep_id = wandb.sweep(yaml_dict, project=config.log.wandb_project)
+    log = config.log
+    dirs = config.dirs
 
-    path = f'./wandb/sweep-{sweep_id}/'
-    os.makedirs(path)
-    with open(path+'/config.yaml', 'w') as yamlfile:
-        yaml.dump(cfg_node_to_dict(config), yamlfile)
+    test = subprocess.getoutput(f'wandb sweep -p {log.wandb_project} -e {log.wandb_entity} {dirs.sweep_cfg_path}')
+    print(test.splitlines()[1].split(': ')[2])
+
+    # sweep_id = wandb.sweep(yaml_dict, project=config.log.wandb_project)
+
+    # path = f'./wandb/sweep-{sweep_id}/'
+    # os.makedirs(path)
+    # with open(path+'/config.yaml', 'w') as yamlfile:
+    #     yaml.dump(cfg_node_to_dict(config), yamlfile)
         
-    now = datetime.datetime.now()
-    with open(path+'/created.txt', 'w') as cfile:
-        cfile.write(now.strftime('%m/%d/%Y, %-I:%M:%S%p'))
+    # now = datetime.datetime.now()
+    # with open(path+'/created.txt', 'w') as cfile:
+    #     cfile.write(now.strftime('%m/%d/%Y, %-I:%M:%S%p'))
 
-    return sweep_id
+    # return sweep_id
 
 
 def sweep_id_prompt(file_list):
@@ -72,8 +78,8 @@ def sweep_id_prompt(file_list):
 
 def launch_wandb_agent(config, sweep_id):
     my_env = os.environ.copy()
-    if config.train.gpu != -1:
-        my_env["CUDA_VISIBLE_DEVICES"] = str(config.train.gpu)
+    # if config.train.gpu != -1:
+    #     my_env["CUDA_VISIBLE_DEVICES"] = str(config.train.gpu)
 
     call = [
         "wandb", "agent", 

@@ -70,24 +70,37 @@ def parse_args():
                         help='This is a test that is a test that is a test that is a test.')
     parser.add_argument('--sweep', action='store_true',
                         help='This is a test that is a test that is a test that is a test.')
-    parser.add_argument('--add', action='store_true',
-                        help='This is a test that is a test that is a test that is a test.')
-    parser.add_argument('--tmux', action='store_true',
-                        help='This is a test that is a test that is a test that is a test.')
     parser.add_argument('--name', type=str, default=None,
                         help='This is a test that is a test that is a test that is a test.')
     args, cfg_args = parser.parse_known_args()
     args = vars(args)
 
+    args['add'] = False
+    args['tmux_sweep'] = None
+
     type_dict = get_config_types()
     for index, arg in enumerate(cfg_args):
         if arg[:2] == '--':
             param = arg[2:]
+
+            last_arg = len(cfg_args) <= index+1
+
+            if param == 'tmux_sweep':
+                if last_arg or cfg_args[index+1][:2] == '--':
+                    args[param] = []
+                else:
+                    args[param] = [int(i) for i in cfg_args[index+1].strip('][').split(',')]
+                break
+
+            if param == 'add':
+                args[param] = True if last_arg or cfg_args[index+1][:2] == '--' else cfg_args[index+1]
+                break
+
             # assert parameter is in config
             assert param in type_dict, \
                 f'\n\n! Invalid Argument. !\n  {arg} is not recognized.\n  {"‾"*len(arg)}\nuse -h to show help message.'
             # assert that config has value
-            assert len(cfg_args) > index+1, \
+            assert not last_arg, \
                 f'\n\n! Argument Missing Value. !\n  {arg} is missing a value.\n  {"‾"*len(arg)}'
             try:
                 if type_dict[param] == bool: 
@@ -143,8 +156,9 @@ def set_device(config, arg_dict):
             gpu_list = [int(x.split(':')[1].replace('MiB', '').strip()) for x in gpu_list] # list of memory usage in MB
             device = min(range(len(gpu_list)), key=lambda x: gpu_list[x]) # get argmin
         else: device = str(config.train.gpu) # user defined GPU index
-    # Using env vars allows cuda:0 to be used regardless of GPU
-    if 'tmux' in arg_dict and not arg_dict['tmux']:
+
+    # TODO EXPLAIN THIS Using env vars allows cuda:0 to be used regardless of GPU
+    if 'tmux_sweep' in arg_dict and arg_dict['tmux_sweep'] is not None:
         os.environ['CUDA_VISIBLE_DEVICES'] = str(device)
 
 

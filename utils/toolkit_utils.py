@@ -120,12 +120,11 @@ def get_pretraining_data(config):
     chopped_spikes, session_names = [], []
     for session in config.data.sessions:
         spikes_arr = []
-        # chop spikes within each block to avoid overlapping chops 
+        # chop spikes within each block to avoid overlapping blocks 
         for _, block in datasets[session].data.groupby(('block_num', 'n')):
             if config.data.use_cl or block.trial_type.to_numpy()[0,0] == 'OL':
-                spikes_arr.append(chop(block.spikes.to_numpy(), config.data.seq_len, config.data.overlap))
-                # if spikes.shape[0] >= config.data.seq_len: 
-                #     spikes_arr.append(chop(spikes, config.data.seq_len, config.data.overlap))
+                if block.spikes.to_numpy().shape[0] >= config.data.seq_len: 
+                    spikes_arr.append(chop(block.spikes.to_numpy(), config.data.seq_len, config.data.overlap))
 
         assert len(spikes_arr) != 0, 'Make sure data has open-loop control if data.use_cl is False.' # TODO
 

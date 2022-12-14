@@ -384,6 +384,9 @@ class Transformer(Module):
         width =  torch.randint(1, config.train.mask_max_span + 1, (1, )).item() if should_expand else 1
         loss_ratio = config.model.loss_ratio if width == 1 else config.model.loss_ratio / width
 
+        if self.has_heldout:
+            labels = torch.cat([labels, heldout_spikes], -1)
+
         # Which indicies shold the loss be computed with
         if self.loss_prob_mask is None or self.loss_prob_mask.size() != labels.size():
             timestep_shape = labels[..., 0].shape # N x T
@@ -400,26 +403,35 @@ class Transformer(Module):
 
         # Designate masked timesteps
         loss_mask = loss_mask.bool().unsqueeze(2).expand_as(labels)
+        # loss_mask[:, -1, :] = True
         labels[~loss_mask] = -100
 
+        loss_mask = loss_mask[..., :spikes.shape[2]]
+
         # Zero mask
-        if self.zero_prob_mask is None or self.zero_prob_mask.size() != labels.size():
+        if self.zero_prob_mask is None or self.zero_prob_mask.shape != spikes.shape:
             zero_mask_ratio = config.model.mask_ratio
-            self.zero_prob_mask = torch.full(labels.shape, zero_mask_ratio, device=spikes.device, dtype=torch.float32)
+            self.zero_prob_mask = torch.full(spikes.shape, zero_mask_ratio, device=spikes.device, dtype=torch.float32)
         indices_zero_masked = torch.bernoulli(self.zero_prob_mask).bool() & loss_mask
+        indices_zero_masked_ = indices_zero_masked
+        # if self.has_heldout:
+        #     indices_zero_masked = indices_zero_masked[..., :spikes.shape[2]]
         spikes[indices_zero_masked] = 0
 
         # Randomize
-        if self.random_prob_mask is None or self.random_prob_mask.size() != labels.size():
+        if self.random_prob_mask is None or self.random_prob_mask.size() != spikes.size():
             randomize_ratio = config.model.random_ratio
-            self.random_prob_mask = torch.full(labels.shape, randomize_ratio, device=spikes.device, dtype=torch.float32)
-        indices_randomized = torch.bernoulli(self.random_prob_mask).bool() & loss_mask & ~indices_zero_masked
-        random_spikes = torch.randint(spikes.max().long(), labels.shape, dtype=torch.long, device=spikes.device)
+            self.random_prob_mask = torch.full(spikes.shape, randomize_ratio, device=spikes.device, dtype=torch.float32)
+        indices_randomized = torch.bernoulli(self.random_prob_mask).bool() & loss_mask & ~indices_zero_masked_
+        random_spikes = torch.randint(0, 5, spikes.shape, dtype=torch.long, device=spikes.device)
+        # random_spikes = torch.randint(spikes.max().long(), spikes.shape, dtype=torch.long, device=spikes.device)
+        # if self.has_heldout:
+        #     indices_randomized = indices_randomized[..., :spikes.shape[2]]
         spikes[indices_randomized] = random_spikes.float()[indices_randomized]
 
         # Add heldout to labels if needed
-        if self.has_heldout:
-            labels = torch.cat([labels, heldout_spikes], -1)
+        # if self.has_heldout:x
+        #     labels = torch.cat([labels, heldout_spikes], -1)
             # loss_mask = torch.cat([loss_mask, torch.ones_like(heldout_spikes, dtype=bool)], -1)
 
         return spikes, labels, loss_mask

@@ -13,6 +13,7 @@ import torch.nn as nn
 # #────#
 from eval import run_evaluation
 from model import Transformer
+from utils.tmux_utils import start_tmux_sweep
 from utils.data_utils import get_dataloaders
 from utils.toolkit_utils import get_pretraining_data
 from utils.model_utils import get_scheduler, get_optimizer
@@ -56,16 +57,21 @@ def main():
     # Set GPU used by cuda:0 from config.setup.gpu_idx
     set_device(config, arg_dict)
     device = torch.device('cuda:0')
-
+    
     # Add an agent to a wandb sweep
-    if arg_dict['add']:
-        add_sweep_agent(config)
+    if arg_dict['add'] != False:
+        sweep_id = arg_dict['add'] if arg_dict['add'] != True else None
+        add_sweep_agent(config, sweep_id)
 
     # Start a wandb sweep
     elif arg_dict['sweep']:
         sweep_id = start_wandb_sweep(config, arg_dict)
-        add_sweep_agent(config)
+        add_sweep_agent(config, sweep_id)
         # shutil.rmtree(glob('./wandb/*'+sweep_id+'/')[0]) # Remove wandb sweep folder when completed
+
+    elif arg_dict['tmux_sweep'] is not None:
+        sweep_id = start_wandb_sweep(config, arg_dict)
+        start_tmux_sweep(arg_dict['tmux_sweep'], sweep_id)
    
     # Run training
     else: run_training(config, device, arg_dict['name'])
@@ -96,35 +102,34 @@ def run_training(config, device, name):
     config = create_model_dir(config, name)
 
     # create the dataloaders and return dataset to init model with
-    train_dl, val_dl, dataset = get_dataloaders(config, *get_pretraining_data(config))
+    train_dl, val_dl, all_dataset = get_dataloaders(config, *get_pretraining_data(config))
 
     # init the model, dataset is used to get data dimensionality
-    model = Transformer(config, dataset)
+    model = Transformer(config, all_dataset)
 
     # always put model on GPU to train
     model.to(device)
-
-    # return model, train_dl, val_dl, dataset
 
     # run training loop
     train(model, train_dl, val_dl)
 
     # run evaluation on trained model
-    run_evaluation(config, model)
+    # run_evaluation(config, model)
     
 
-def add_sweep_agent(config):
+def add_sweep_agent(config, id=None):
     '''
     '''
-    # if no id given, prompt the user from all current sweeps
-    file_list = glob('./wandb/sweep*')
-    n_files = len(file_list)
+    if id is None:
+        # if no id given, prompt the user from all current sweeps
+        file_list = glob('./wandb/sweep*')
+        n_files = len(file_list)
 
-    # if no files were found then exit
-    assert n_files != 0, '\nError: No sweeps are currently running.'
-    
-    # get sweep id, if there is more than one sweep file then prompt user to choose
-    id = sweep_id_prompt(file_list) if n_files > 1 else file_list[0].split('/')[-1].split('-')[-1]
+        # if no files were found then exit
+        assert n_files != 0, '\nError: No sweeps are currently running.'
+        
+        # get sweep id, if there is more than one sweep file then prompt user to choose
+        id = sweep_id_prompt(file_list) if n_files > 1 else file_list[0].split('/')[-1].split('-')[-1]
 
     # get original config used to start sweep
     config = get_config_from_file(f'./wandb/sweep-{id}/config.yaml')

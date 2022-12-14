@@ -36,6 +36,8 @@ class Dataset(data.Dataset):
     def __len__(self):
         return self.n_samples
 
+    
+
     def __getitem__(self, index):
         heldout = self.heldout_spikes[index] if self.has_heldout else []
         return self.heldin_spikes[index], heldout, self.session_names[index]
