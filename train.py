@@ -114,7 +114,7 @@ def run_training(config, device, name):
     train(model, train_dl, val_dl)
 
     # run evaluation on trained model
-    # run_evaluation(config, model)
+    run_evaluation(config, model)
     
 
 def add_sweep_agent(config, id=None):

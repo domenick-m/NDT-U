@@ -72,6 +72,7 @@ def parse_args():
                         help='This is a test that is a test that is a test that is a test.')
     parser.add_argument('--name', type=str, default=None,
                         help='This is a test that is a test that is a test that is a test.')
+    
     args, cfg_args = parser.parse_known_args()
     args = vars(args)
 
@@ -90,11 +91,11 @@ def parse_args():
                     args[param] = []
                 else:
                     args[param] = [int(i) for i in cfg_args[index+1].strip('][').split(',')]
-                break
+                continue
 
             if param == 'add':
                 args[param] = True if last_arg or cfg_args[index+1][:2] == '--' else cfg_args[index+1]
-                break
+                continue
 
             # assert parameter is in config
             assert param in type_dict, \
@@ -102,6 +103,7 @@ def parse_args():
             # assert that config has value
             assert not last_arg, \
                 f'\n\n! Argument Missing Value. !\n  {arg} is missing a value.\n  {"‾"*len(arg)}'
+            
             try:
                 if type_dict[param] == bool: 
                     args[param] = type_dict[param](strtobool(cfg_args[index+1]))
@@ -109,7 +111,9 @@ def parse_args():
                 elif type_dict[param] == list: 
                     args[param] = [int(i) for i in cfg_args[index+1].strip('][').split(',')]
                     
-                else: args[param] = type_dict[param](cfg_args[index+1])
+                else: 
+                    args[param] = type_dict[param](cfg_args[index+1])
+
             except:
                 true_type = f'{str(type_dict[param])}\n{" "*(len(arg)+3)}{"‾"*len(cfg_args[index+1])}'
                 raise Exception(
@@ -142,7 +146,7 @@ def set_device(config, arg_dict):
 
     Args:
         config (dict): A config object.
-    '''    
+    '''
     if 'gpu' in arg_dict:
         device = arg_dict['gpu'] # CLI defined GPU index
     elif 'CUDA_VISIBLE_DEVICES' in os.environ:
@@ -158,7 +162,7 @@ def set_device(config, arg_dict):
         else: device = str(config.train.gpu) # user defined GPU index
 
     # TODO EXPLAIN THIS Using env vars allows cuda:0 to be used regardless of GPU
-    if 'tmux_sweep' in arg_dict and arg_dict['tmux_sweep'] is not None:
+    if 'tmux_sweep' in arg_dict and arg_dict['tmux_sweep'] is None:
         os.environ['CUDA_VISIBLE_DEVICES'] = str(device)
 
 

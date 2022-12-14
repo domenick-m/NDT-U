@@ -1,26 +1,10 @@
-method: random
-name: lr_factor_random_sweep
+method: grid
+name: factor_dim_pos_emb_sweep
 program : train.py
 command: ['${env}', 'python3', '${program}', '-y', '--silent']
-parameters: 
-  model.n_layers:
-    values: [1, 2, 3, 4, 5, 6, 7, 8, 9]
-  model.n_heads:
-    values: [2, 4, 6, 8, 12]
-  model.head_dim:
-    values: [16, 32, 64]
-  model.hidden_size:
+parameters:
+  model.factor_dim:
     values: [16, 32, 64, 128]
-  model.context_forward:
-    values: [1, 6, 30]
-  model.context_backward:
-    values: [1, 6, 30]
-  model.dropout:
-    values: [0.1, 0.3, 0.5, 0.7]
-  model.dropout_rates:
-    values: [0.1, 0.3, 0.5, 0.7]
-  model.dropout_embedding:
-    values: [0.1, 0.3, 0.5, 0.7]
-  model.dropout_attention:
-    values: [0.1, 0.3, 0.5, 0.7]
+  model.pos_emb_size:
+    values: [8, 16, 32, 64, 128, 256]
   

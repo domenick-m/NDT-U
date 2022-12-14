@@ -143,7 +143,7 @@ config.train.seed = 123456789   # seed for training
 config.train.val_seed = 123456789   # seed for getting validation set
 config.train.heldout_seed = 123456789   # seed for heldout
 
-config.train.pct_heldout = 0.0   # What percentage of channels should be heldout
+config.train.pct_heldout = 0.25   # What percentage of channels should be heldout
 
 '''
    ╔════════════════════════════════════════════════════════════════════════╗

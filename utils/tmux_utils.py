@@ -24,9 +24,7 @@ def start_tmux_sweep(agent_gpus, sweep_id):
         for gpu in agent_gpus:
             window.select_pane(gpu).send_keys(f'./train.py --add {sweep_id} --silent --gpu {gpu}')
 
-        # server.attach_session(target_session="ndt_sweep")
-        # os.system("tmux attach")
-        # os.system("tmux kill-session -t session")
+        server.attach_session(target_session="ndt_sweep")
 
     else:
         print("Session exists! \nCall ./train.py --kill to end it.")
