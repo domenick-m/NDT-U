@@ -66,8 +66,8 @@ config.data.overlap = 12   # Overlapping bins between chops for training
 config.data.sessions = [
    't5.2021.05.05',
    't5.2021.05.17',
-   # 't5.2021.05.19',
-   # 't5.2021.05.24',
+   't5.2021.05.19',
+   't5.2021.05.24',
    # 't5.2021.05.26',
    # 't5.2021.06.02',
    # 't5.2021.06.04',
@@ -83,15 +83,16 @@ config.data.sessions = [
    # 't5.2021.07.21',
 ]
 
+# config.data.ol_align_field = 'start_time'
 config.data.ol_align_field = 'speed_onset'
-config.data.ol_align_range = [-350, 1250]
+config.data.ol_align_range = [-500, 1000]
 config.data.cl_align_field = 'start_time'
 config.data.cl_align_range = [100, 550]
 
-config.data.lag = 40   # ms to lag behavior by for decoding
-config.data.smth_std = 60   # ms std to smooth rates for PCR init
+config.data.lag = 0   # ms to lag behavior by for decoding
+config.data.smth_std = 20   # ms std to smooth rates for PCR init
 config.data.use_cl = False   # if closed-loop blocks should be used to train model
-config.data.rem_xcorr = True   # Whether or not correlated channels should be removed.
+config.data.rem_xcorr = False   # Whether or not correlated channels should be removed.
 config.data.xcorr_thesh = 0.2   # Threshold to remove correlated channels
 
 config.data.cache_pcr = True 
@@ -143,7 +144,7 @@ config.train.seed = 123456789   # seed for training
 config.train.val_seed = 123456789   # seed for getting validation set
 config.train.heldout_seed = 123456789   # seed for heldout
 
-config.train.pct_heldout = 0.25   # What percentage of channels should be heldout
+config.train.pct_heldout = 0.0  # What percentage of channels should be heldout
 
 '''
    ╔════════════════════════════════════════════════════════════════════════╗

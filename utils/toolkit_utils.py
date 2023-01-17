@@ -168,6 +168,7 @@ def get_trialized_data(config, datasets, model=None):
             trialized_data[session]['cl_trial_data'] = dataset.make_trial_data(
                 align_field=config.data.cl_align_field,
                 align_range=(config.data.cl_align_range[0], config.data.cl_align_range[1]),
+                # ignored_trials= ~cl_blocks,
                 ignored_trials=~dataset.trial_info['is_successful'] | ~cl_blocks,
                 allow_overlap=True
             )

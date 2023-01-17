@@ -50,7 +50,9 @@ def align_sessions(config):
             for trial_id, trial in trialized_dataset.groupby('trial_id'):
                 if datasets[session].trial_info.loc[trial_id].cond_id == cond_id:
                 # get position where condition is above 0, filter out -1,-1 targets
-                    smth_spikes = trial.spikes_smth.loc[trial.cond_id.n >= 0]
+                    # smth_spikes = trial.spikes_smth.loc[trial.cond_id.n >= 0]
+                    smth_spikes = trial.spikes_smth
+                    print(smth_spikes.shape, trial_len)
                     if smth_spikes.shape[0] == trial_len:
                         smth_trial_list.append(smth_spikes.to_numpy()[:, dataset.heldin_channels])
 

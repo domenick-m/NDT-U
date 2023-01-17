@@ -1,10 +1,9 @@
-method: grid
-name: factor_dim_pos_emb_sweep
+method: random
+name: lower_init_lr_sweep
 program : train.py
 command: ['${env}', 'python3', '${program}', '-y', '--silent']
 parameters:
-  model.factor_dim:
-    values: [16, 32, 64, 128]
-  model.pos_emb_size:
-    values: [8, 16, 32, 64, 128, 256]
+  train.init_lr:
+    max: 0.05
+    min: 0.00001
   
